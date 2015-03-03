@@ -7,6 +7,10 @@ A powerful "hosts" replacement.
 * IPv4 and IPv6 supported.
 * Return a immediate address (A/AAAA record) or redirect query to a custom name server on pattern matched.
 
+## Requirement
+
+* .NET Framework 4.5+ (is not compatible with Windows XP)
+
 ## Usage
 
 Edit `rules.cfg` to customize your rules. `rules.cfg` is a standord JSON file, your can use any of your favorite editors to open it.
