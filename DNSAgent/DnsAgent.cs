@@ -42,7 +42,15 @@ namespace DnsAgent
             try
             {
                 var query = await UdpListener.ReceiveAsync();
-                var message = DnsMessage.Parse(query.Buffer);
+                DnsMessage message;
+                try
+                {
+                    message = DnsMessage.Parse(query.Buffer);
+                }
+                catch (Exception)
+                {
+                    throw new ParsingException();
+                }
                 var targetNameServer = Options.DefaultNameServer;
                 if (Options.QueryTimeout == null)
                     throw new NullReferenceException();
@@ -112,6 +120,9 @@ namespace DnsAgent
             {
                 if (e.SocketErrorCode != SocketError.ConnectionReset)
                     Logger.Error("Unexpected socket error:\n{0}", e);
+            }
+            catch (ParsingException)
+            {
             }
             catch (Exception e)
             {

@@ -20,4 +20,6 @@ namespace DNSAgent
 
         public DnsQuestion Question { get; set; }
     }
+
+    internal class ParsingException : Exception {}
 }
