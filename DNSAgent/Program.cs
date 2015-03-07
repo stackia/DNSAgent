@@ -2,26 +2,74 @@
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using DNSAgent;
+using Newtonsoft.Json;
 
 namespace DnsAgent
 {
     internal class Program
     {
+        private const string OptionsFileName = "options.cfg";
+        private const string RulesFileName = "rules.cfg";
+
         private static void Main(string[] args)
         {
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             var buildTime = RetrieveLinkerTimestamp(Assembly.GetExecutingAssembly().Location);
-            Console.WriteLine("DNSAgent {0}.{1}.{2} (build at {3})\n", version.Major, version.Minor,
-                version.Build, buildTime.ToString(CultureInfo.CurrentCulture));
             Console.Title = string.Format("DNSAgent - Starting ...");
-            Console.WriteLine("Starting...");
-            var dnsAgent = new DnsAgent();
-            dnsAgent.Start();
-            Console.WriteLine("DNSAgent has been started.");
-            Console.WriteLine("Listening on 0.0.0.0:53...");
-            Console.Title = "DNSAgent - Running ...";
-            while (true)
-                Console.ReadKey(true);
+
+            Logger.Info("DNSAgent {0}.{1}.{2} (build at {3})\n", version.Major, version.Minor,
+                version.Build, buildTime.ToString(CultureInfo.CurrentCulture));
+            Logger.Info("Starting...");
+
+            var dnsAgent = new DnsAgent(ReadOptions(), ReadRules());
+            var startedWaitHandler = new ManualResetEvent(false);
+            dnsAgent.Started += () => { startedWaitHandler.Set(); };
+            Task.Run(() => dnsAgent.Start());
+            startedWaitHandler.WaitOne();
+            Logger.Info("Press R to reload options.cfg and rules.cfg.");
+
+            while (true) // Reload options.cfg and rules.cfg
+            {
+                var keyInfo = Console.ReadKey(true);
+                if (keyInfo.Key != ConsoleKey.R) continue;
+                dnsAgent.Options = ReadOptions();
+                dnsAgent.Rules = ReadRules();
+                Logger.Info("Options and rules reloaded.");
+            }
+        }
+
+        private static Options ReadOptions()
+        {
+            Options options;
+            if (File.Exists(Path.Combine(Environment.CurrentDirectory, OptionsFileName)))
+            {
+                options = JsonConvert.DeserializeObject<Options>(
+                    File.ReadAllText(Path.Combine(Environment.CurrentDirectory, OptionsFileName)));
+            }
+            else
+            {
+                options = new Options();
+                File.WriteAllText(Path.Combine(Environment.CurrentDirectory, OptionsFileName),
+                    JsonConvert.SerializeObject(options, Formatting.Indented));
+            }
+            return options;
+        }
+
+        private static Rules ReadRules()
+        {
+            Rules rules;
+            using (
+                var file = File.Open(Path.Combine(Environment.CurrentDirectory, RulesFileName), FileMode.OpenOrCreate))
+            using (var reader = new StreamReader(file))
+            using (var jsonTextReader = new JsonTextReader(reader))
+            {
+                var serializer = JsonSerializer.CreateDefault();
+                rules = serializer.Deserialize<Rules>(jsonTextReader) ?? new Rules();
+            }
+            return rules;
         }
 
         /// <summary>
