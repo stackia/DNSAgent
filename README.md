@@ -12,6 +12,12 @@ A powerful "hosts" replacement.
 
 * .NET Framework 4.5+ (not compatible with Windows XP)
 
+## For Dnsmasq Users
+
+There is a Dnsmasq to DNSAgent rules converter available to quickly make your Dnsmasq rules working with this program:
+
+https://stackia.github.io/masq2agent/
+
 ## Usage
 
 Edit `options.cfg` to change options.
