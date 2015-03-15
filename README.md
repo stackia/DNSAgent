@@ -28,6 +28,8 @@ Both `options.cfg` and `rules.cfg` are standord JSON files, your can use any of 
 
 Launch `DNSAgent.exe` and change your system DNS settings to 127.0.0.1. Boom!
 
+You can choose to install DNSAgent as a Windows service by running `Install.bat`. And `Unintall.bat` to remove the service.
+
 A sample configuration:
 
 options.cfg:
