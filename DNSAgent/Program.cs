@@ -1,7 +1,9 @@
 ﻿using System;
+using System.Configuration.Install;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.ServiceProcess;
 using System.Threading;
 using System.Threading.Tasks;
 using DNSAgent;
@@ -16,29 +18,59 @@ namespace DnsAgent
 
         private static void Main(string[] args)
         {
+            Directory.SetCurrentDirectory(AppDomain.CurrentDomain.BaseDirectory);
+            if (!Environment.UserInteractive) // Running as service
+            {
+                using (var service = new Service())
+                    ServiceBase.Run(service);
+            }
+            else // Running as console app
+            {
+                var parameter = string.Concat(args);
+                switch (parameter)
+                {
+                    case "--install":
+                        ManagedInstallerClass.InstallHelper(new[] {Assembly.GetExecutingAssembly().Location});
+                        return;
+
+                    case "--uninstall":
+                        ManagedInstallerClass.InstallHelper(new[] {"/u", Assembly.GetExecutingAssembly().Location});
+                        return;
+                }
+
+                Start(args);
+            }
+        }
+
+        private static void Start(string[] args)
+        {
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             var buildTime = RetrieveLinkerTimestamp(Assembly.GetExecutingAssembly().Location);
-            Console.Title = string.Format("DNSAgent - Starting ...");
+            Logger.Title = string.Format("DNSAgent - Starting ...");
 
             Logger.Info("DNSAgent {0}.{1}.{2} (build at {3})\n", version.Major, version.Minor,
                 version.Build, buildTime.ToString(CultureInfo.CurrentCulture));
             Logger.Info("Starting...");
 
             var dnsAgent = new DnsAgent(ReadOptions(), ReadRules());
-            var startedWaitHandler = new ManualResetEvent(false);
-            dnsAgent.Started += () => { startedWaitHandler.Set(); };
-            Task.Run(() => dnsAgent.Start());
-            startedWaitHandler.WaitOne();
-            Logger.Info("Press R to reload options.cfg and rules.cfg.");
-
-            while (true) // Reload options.cfg and rules.cfg
+            if (Environment.UserInteractive)
             {
-                var keyInfo = Console.ReadKey(true);
-                if (keyInfo.Key != ConsoleKey.R) continue;
-                dnsAgent.Options = ReadOptions();
-                dnsAgent.Rules = ReadRules();
-                Logger.Info("Options and rules reloaded.");
+                var startedWaitHandler = new ManualResetEvent(false);
+                dnsAgent.Started += () => { startedWaitHandler.Set(); };
+                Task.Run(() => dnsAgent.Start());
+                startedWaitHandler.WaitOne();
+                Logger.Info("Press R to reload options.cfg and rules.cfg.");
+
+                while (true) // Reload options.cfg and rules.cfg
+                {
+                    var keyInfo = Console.ReadKey(true);
+                    if (keyInfo.Key != ConsoleKey.R) continue;
+                    dnsAgent.Options = ReadOptions();
+                    dnsAgent.Rules = ReadRules();
+                    Logger.Info("Options and rules reloaded.");
+                }
             }
+            Task.Run(() => dnsAgent.Start());
         }
 
         private static Options ReadOptions()
@@ -99,5 +131,22 @@ namespace DnsAgent
                     BitConverter.ToInt32(b, peHeaderOffset) + linkerTimestampOffset));
             return dt.AddHours(TimeZone.CurrentTimeZone.GetUtcOffset(dt).Hours);
         }
+
+        #region Nested classes to support running as service
+
+        private class Service : ServiceBase
+        {
+            public Service()
+            {
+                ServiceName = "DNSAgent";
+            }
+
+            protected override void OnStart(string[] args)
+            {
+                Start(args);
+            }
+        }
+
+        #endregion
     }
 }

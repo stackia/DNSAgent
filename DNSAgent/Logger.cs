@@ -5,6 +5,19 @@ namespace DNSAgent
     internal class Logger
     {
         private static readonly object OutputLock = new object();
+        private static string _title;
+
+        public static string Title
+        {
+            get { return Environment.UserInteractive ? Console.Title : _title; }
+            set
+            {
+                if (Environment.UserInteractive)
+                    Console.Title = value;
+                else
+                    _title = value;
+            }
+        }
 
         public static void Error(string format, params object[] arg)
         {

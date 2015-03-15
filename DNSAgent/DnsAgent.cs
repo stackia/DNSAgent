@@ -30,7 +30,7 @@ namespace DnsAgent
 
             Logger.Info("DNSAgent has been started.");
             Logger.Info("Listening on {0}...", endPoint);
-            Console.Title = "DNSAgent - Listening ...";
+            Logger.Title = "DNSAgent - Listening ...";
             OnStarted();
 
             while (connectionPool.WaitOne())
@@ -121,9 +121,7 @@ namespace DnsAgent
                 if (e.SocketErrorCode != SocketError.ConnectionReset)
                     Logger.Error("Unexpected socket error:\n{0}", e);
             }
-            catch (ParsingException)
-            {
-            }
+            catch (ParsingException) {}
             catch (Exception e)
             {
                 Logger.Error("Unexpected exception:\n{0}", e);
