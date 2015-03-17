@@ -37,7 +37,7 @@ namespace DnsAgent
                 ReceiveMessage(connectionPool);
         }
 
-        public async void ReceiveMessage(Semaphore connectionPool)
+        private async void ReceiveMessage(Semaphore connectionPool)
         {
             try
             {
@@ -114,7 +114,8 @@ namespace DnsAgent
                     // Already answered, directly return to the client
                     message.Encode(false, out responseBuffer);
                 }
-                await UdpListener.SendAsync(responseBuffer, responseBuffer.Length, query.RemoteEndPoint);
+                if (responseBuffer != null)
+                    await UdpListener.SendAsync(responseBuffer, responseBuffer.Length, query.RemoteEndPoint);
             }
             catch (SocketException e)
             {
@@ -144,7 +145,7 @@ namespace DnsAgent
             if (message.Questions.Count > 0)
                 question = message.Questions[0];
 
-            byte[] responseBuffer;
+            byte[] responseBuffer = null;
             using (var forwarder = new UdpClient())
             {
                 try
@@ -181,7 +182,7 @@ namespace DnsAgent
                             message.Questions[0].RecordType)
                         : string.Format("Transaction #{0}", message.TransactionID);
                     Logger.Warning("Query timeout for: {0}", warningText);
-                    Utils.ReturnDnsMessageServerFailure(message, out responseBuffer);
+                    // Remaining responseBuffer null, don't return any messages to the client.
                 }
                 catch (InfiniteForwardingException e)
                 {
