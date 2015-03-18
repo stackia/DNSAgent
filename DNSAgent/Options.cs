@@ -4,11 +4,17 @@
     {
         public Options()
         {
+            HideOnStart = false;
             ListenOn = "127.0.0.1";
             DefaultNameServer = "8.8.8.8";
             QueryTimeout = 4000;
             CompressionMutation = false;
         }
+
+        /// <summary>
+        ///     Set to true to automatically hide the window on start.
+        /// </summary>
+        public bool? HideOnStart { get; set; }
 
         /// <summary>
         ///     IP and port that DNSAgent will listen on. 0.0.0.0:53 for all interfaces and 127.0.0.1:53 for localhost. Of course

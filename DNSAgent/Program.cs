@@ -1,10 +1,14 @@
 ﻿using System;
 using System.Configuration.Install;
+using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.ServiceProcess;
 using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 using DNSAgent;
 using Newtonsoft.Json;
 
@@ -14,7 +18,9 @@ namespace DnsAgent
     {
         private const string OptionsFileName = "options.cfg";
         private const string RulesFileName = "rules.cfg";
-        private static DnsAgent dnsAgent;
+        private static DnsAgent _dnsAgent;
+        private static NotifyIcon _notifyIcon;
+        private static ContextMenu _contextMenu;
 
         private static void Main(string[] args)
         {
@@ -31,11 +37,13 @@ namespace DnsAgent
                 switch (parameter)
                 {
                     case "--install":
-                        ManagedInstallerClass.InstallHelper(new[] {"/LogFile=", Assembly.GetExecutingAssembly().Location});
+                        ManagedInstallerClass.InstallHelper(new[]
+                        {"/LogFile=", Assembly.GetExecutingAssembly().Location});
                         return;
 
                     case "--uninstall":
-                        ManagedInstallerClass.InstallHelper(new[] { "/LogFile=", "/u", Assembly.GetExecutingAssembly().Location });
+                        ManagedInstallerClass.InstallHelper(new[]
+                        {"/LogFile=", "/u", Assembly.GetExecutingAssembly().Location});
                         return;
                 }
                 Start(args);
@@ -48,47 +56,99 @@ namespace DnsAgent
 
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             var buildTime = Utils.RetrieveLinkerTimestamp(Assembly.GetExecutingAssembly().Location);
-            Logger.Info("DNSAgent {0}.{1}.{2} (build at {3})\n", version.Major, version.Minor,
-                version.Build, buildTime.ToString(CultureInfo.CurrentCulture));
+            var programName = string.Format("DNSAgent {0}.{1}.{2}", version.Major, version.Minor, version.Build);
+            Logger.Info("{0} (build at {1})\n", programName, buildTime.ToString(CultureInfo.CurrentCulture));
             Logger.Info("Starting...");
 
-            dnsAgent = new DnsAgent(ReadOptions(), ReadRules());
+            _dnsAgent = new DnsAgent(ReadOptions(), ReadRules());
             if (Environment.UserInteractive)
             {
                 var startedWaitHandler = new ManualResetEvent(false);
-                dnsAgent.Started += () => { startedWaitHandler.Set(); };
-                dnsAgent.Start();
+                _dnsAgent.Started += () => { startedWaitHandler.Set(); };
+                _dnsAgent.Start();
                 startedWaitHandler.WaitOne();
                 Logger.Info("Press Ctrl-R to reload configurations, Ctrl-Q to stop and quit.");
 
-                var exit = false;
-                while (!exit)
+                Task.Run(() =>
                 {
-                    var keyInfo = Console.ReadKey(true);
-                    if (keyInfo.Modifiers != ConsoleModifiers.Control) continue;
-                    switch (keyInfo.Key)
+                    var exit = false;
+                    while (!exit)
                     {
-                        case ConsoleKey.R: // Reload options.cfg and rules.cfg
-                            dnsAgent.Options = ReadOptions();
-                            dnsAgent.Rules = ReadRules();
-                            Logger.Info("Options and rules reloaded.");
-                            break;
+                        var keyInfo = Console.ReadKey(true);
+                        if (keyInfo.Modifiers != ConsoleModifiers.Control) continue;
+                        switch (keyInfo.Key)
+                        {
+                            case ConsoleKey.R: // Reload options.cfg and rules.cfg
+                                Reload();
+                                break;
 
-                        case ConsoleKey.Q:
-                            Stop();
-                            exit = true;
-                            break;
+                            case ConsoleKey.Q:
+                                exit = true;
+                                Stop();
+                                break;
+                        }
                     }
-                }
+                });
+
+                var hideOnStart = _dnsAgent.Options.HideOnStart ?? false;
+                var hideMenuItem = new MenuItem(hideOnStart ? "Show" : "Hide");
+                if (hideOnStart)
+                    ShowWindow(GetConsoleWindow(), SW_HIDE);
+                hideMenuItem.Click += (sender, eventArgs) =>
+                {
+                    if (hideMenuItem.Text == "Hide")
+                    {
+                        ShowWindow(GetConsoleWindow(), SW_HIDE);
+                        hideMenuItem.Text = "Show";
+                    }
+                    else
+                    {
+                        ShowWindow(GetConsoleWindow(), SW_SHOW);
+                        hideMenuItem.Text = "Hide";
+                    }
+                };
+                _contextMenu = new ContextMenu(new[]
+                {
+                    hideMenuItem,
+                    new MenuItem("Reload", (sender, eventArgs) => Reload()),
+                    new MenuItem("Exit", (sender, eventArgs) => Stop())
+                });
+                _notifyIcon = new NotifyIcon
+                {
+                    Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location),
+                    ContextMenu = _contextMenu,
+                    Text = programName,
+                    Visible = true
+                };
+                _notifyIcon.MouseClick += (sender, eventArgs) =>
+                {
+                    if (eventArgs.Button == MouseButtons.Left)
+                        hideMenuItem.PerformClick();
+                };
+                Application.Run();
             }
             else
-                dnsAgent.Start();
+                _dnsAgent.Start();
         }
 
         private static void Stop()
         {
-            if (dnsAgent != null)
-                dnsAgent.Stop();
+            if (_dnsAgent != null)
+                _dnsAgent.Stop();
+
+            if (Environment.UserInteractive)
+            {
+                _notifyIcon.Dispose();
+                _contextMenu.Dispose();
+                Application.Exit();
+            }
+        }
+
+        private static void Reload()
+        {
+            _dnsAgent.Options = ReadOptions();
+            _dnsAgent.Rules = ReadRules();
+            Logger.Info("Options and rules reloaded.");
         }
 
         #region Nested class to support running as service
@@ -112,6 +172,19 @@ namespace DnsAgent
                 base.OnStop();
             }
         }
+
+        #endregion
+
+        #region Win32 API Import
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetConsoleWindow();
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        private const int SW_HIDE = 0;
+        private const int SW_SHOW = 5;
 
         #endregion
 
