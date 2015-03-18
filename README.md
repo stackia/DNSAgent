@@ -35,6 +35,7 @@ A sample configuration:
 options.cfg:
 ```
 {
+    "HideOnStart": true,
     "ListenOn": "127.0.0.1:53",
     "DefaultNameServer": "8.8.8.8:53",
     "QueryTimeout": 4000,
@@ -83,4 +84,4 @@ IPv6 address will only be returned when the client querys for AAAA records.
 [2001:4860:4860::8888]:2064 // IPv6 address with a custom port 9029
 ```
 
-You can press R to reload all configurations without restart this program.
+You can press `Ctrl + R` to reload all configurations without restart this program.
