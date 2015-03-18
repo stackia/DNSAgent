@@ -23,8 +23,8 @@ namespace DNSAgent
             // Automatically start after install
             AfterInstall += (sender, args) =>
             {
-                using (var sc = new ServiceController(serviceInstaller.ServiceName))
-                    sc.Start();
+                using (var serviceController = new ServiceController(serviceInstaller.ServiceName))
+                    serviceController.Start();
             };
 
             Installers.AddRange(new Installer[]

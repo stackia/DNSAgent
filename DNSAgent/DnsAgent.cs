@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
@@ -11,6 +12,14 @@ namespace DnsAgent
 {
     internal class DnsAgent
     {
+        private Task _forwardingTask;
+        private Task _listeningTask;
+        private CancellationTokenSource _stopTokenSource;
+        private ConcurrentDictionary<ushort, IPEndPoint> _transactionClients;
+        private ConcurrentDictionary<ushort, CancellationTokenSource> _transactionTimeoutCancellationTokenSources;
+        private UdpClient _udpForwarder;
+        private UdpClient _udpListener;
+
         public DnsAgent(Options options, Rules rules)
         {
             Options = options ?? new Options();
@@ -19,33 +28,128 @@ namespace DnsAgent
 
         public Options Options { get; set; }
         public Rules Rules { get; set; }
-        private UdpClient UdpListener { get; set; }
         public event Action Started;
+        public event Action Stopped;
 
         public void Start()
         {
             var endPoint = Utils.CreateIpEndPoint(Options.ListenOn, 53);
-            UdpListener = new UdpClient(endPoint);
-            var connectionPool = new Semaphore(25, 25);
+            _udpListener = new UdpClient(endPoint);
+            _udpForwarder = new UdpClient(0);
+            _stopTokenSource = new CancellationTokenSource();
+            _transactionClients = new ConcurrentDictionary<ushort, IPEndPoint>();
+            _transactionTimeoutCancellationTokenSources = new ConcurrentDictionary<ushort, CancellationTokenSource>();
+
+            _listeningTask = Task.Run(async () =>
+            {
+                while (!_stopTokenSource.IsCancellationRequested)
+                {
+                    try
+                    {
+                        var query = await _udpListener.ReceiveAsync();
+                        Task.Run(() => ProcessMessage(query));
+                    }
+                    catch (SocketException e)
+                    {
+                        if (e.SocketErrorCode != SocketError.ConnectionReset)
+                            Logger.Error("[Listener.Receive] Unexpected socket error:\n{0}", e);
+                    }
+                    catch (ObjectDisposedException) {} // Force closing _udpListener will cause this exception
+                    catch (Exception e)
+                    {
+                        Logger.Error("[Listener] Unexpected exception:\n{0}", e);
+                    }
+                }
+                _stopTokenSource.Token.ThrowIfCancellationRequested();
+            }, _stopTokenSource.Token);
+
+            _forwardingTask = Task.Run(async () =>
+            {
+                while (!_stopTokenSource.IsCancellationRequested)
+                {
+                    try
+                    {
+                        var query = await _udpForwarder.ReceiveAsync();
+                        DnsMessage message;
+                        try
+                        {
+                            message = DnsMessage.Parse(query.Buffer);
+                        }
+                        catch (Exception)
+                        {
+                            throw new ParsingException();
+                        }
+                        if (!_transactionClients.ContainsKey(message.TransactionID)) continue;
+                        IPEndPoint remoteEndPoint;
+                        CancellationTokenSource ignore;
+                        _transactionClients.TryRemove(message.TransactionID, out remoteEndPoint);
+                        _transactionTimeoutCancellationTokenSources.TryRemove(message.TransactionID, out ignore);
+                        await _udpListener.SendAsync(query.Buffer, query.Buffer.Length, remoteEndPoint);
+                    }
+                    catch (ParsingException) {}
+                    catch (SocketException e)
+                    {
+                        if (e.SocketErrorCode != SocketError.ConnectionReset)
+                            Logger.Error("[Forwarder.Send] Name server unreachable.");
+                        else
+                            Logger.Error("[Forwarder.Receive] Unexpected socket error:\n{0}", e);
+                    }
+                    catch (ObjectDisposedException) {} // Force closing _udpListener will cause this exception
+                    catch (Exception e)
+                    {
+                        Logger.Error("[Forwarder] Unexpected exception:\n{0}", e);
+                    }
+                }
+                _stopTokenSource.Token.ThrowIfCancellationRequested();
+            });
 
             Logger.Info("DNSAgent has been started.");
             Logger.Info("Listening on {0}...", endPoint);
             Logger.Title = "DNSAgent - Listening ...";
             OnStarted();
-
-            while (connectionPool.WaitOne())
-                ReceiveMessage(connectionPool);
         }
 
-        private async void ReceiveMessage(Semaphore connectionPool)
+        public void Stop()
+        {
+            if (_stopTokenSource != null)
+                _stopTokenSource.Cancel();
+
+            if (_udpListener != null)
+                _udpListener.Close();
+
+            if (_udpForwarder != null)
+                _udpForwarder.Close();
+
+            try
+            {
+                if (_listeningTask != null)
+                    _listeningTask.Wait();
+
+                if (_forwardingTask != null)
+                    _forwardingTask.Wait();
+            }
+            catch (AggregateException) {}
+
+            _stopTokenSource = null;
+            _udpListener = null;
+            _udpForwarder = null;
+            _listeningTask = null;
+            _forwardingTask = null;
+            _transactionClients = null;
+            _transactionTimeoutCancellationTokenSources = null;
+
+            Logger.Info("DNSAgent has been stopped.");
+            OnStopped();
+        }
+
+        private async Task ProcessMessage(UdpReceiveResult udpMessage)
         {
             try
             {
-                var query = await UdpListener.ReceiveAsync();
                 DnsMessage message;
                 try
                 {
-                    message = DnsMessage.Parse(query.Buffer);
+                    message = DnsMessage.Parse(udpMessage.Buffer);
                 }
                 catch (Exception)
                 {
@@ -58,10 +162,10 @@ namespace DnsAgent
                     throw new NullReferenceException();
                 var queryTimeout = Options.QueryTimeout.Value;
                 var useCompressionMutation = Options.CompressionMutation.Value;
-                byte[] responseBuffer;
 
                 // Match rules
                 var question = message.Questions[0];
+                Logger.Info("-> {0}", question.Name);
                 if (question.RecordType == RecordType.A || question.RecordType == RecordType.Aaaa)
                 {
                     for (var i = Rules.Count - 1; i >= 0; i--)
@@ -75,7 +179,8 @@ namespace DnsAgent
                             IPAddress.TryParse(Rules[i].Address, out ip);
                             if (ip == null) continue; // Invalid rule
 
-                            if (question.RecordType == RecordType.A && ip.AddressFamily == AddressFamily.InterNetwork)
+                            if (question.RecordType == RecordType.A &&
+                                ip.AddressFamily == AddressFamily.InterNetwork)
                                 message.AnswerRecords.Add(new ARecord(question.Name, 0, ip));
                             else if (question.RecordType == RecordType.Aaaa &&
                                      ip.AddressFamily == AddressFamily.InterNetworkV6)
@@ -104,113 +209,115 @@ namespace DnsAgent
                 if (message.IsQuery)
                 {
                     // Forward query to another name server
-                    responseBuffer =
-                        await
-                            ForwardMessage(message, query.Buffer, Utils.CreateIpEndPoint(targetNameServer, 53),
-                                queryTimeout, useCompressionMutation);
+                    await
+                        ForwardMessage(message, udpMessage, Utils.CreateIpEndPoint(targetNameServer, 53),
+                            queryTimeout,
+                            useCompressionMutation);
                 }
                 else
                 {
                     // Already answered, directly return to the client
+                    byte[] responseBuffer;
                     message.Encode(false, out responseBuffer);
+                    if (responseBuffer != null)
+                    {
+                        await
+                            _udpListener.SendAsync(responseBuffer, responseBuffer.Length, udpMessage.RemoteEndPoint);
+                    }
                 }
-                if (responseBuffer != null)
-                    await UdpListener.SendAsync(responseBuffer, responseBuffer.Length, query.RemoteEndPoint);
-            }
-            catch (SocketException e)
-            {
-                if (e.SocketErrorCode != SocketError.ConnectionReset)
-                    Logger.Error("Unexpected socket error:\n{0}", e);
             }
             catch (ParsingException) {}
+            catch (SocketException e)
+            {
+                Logger.Error("[Listener.Send] Unexpected socket error:\n{0}", e);
+            }
             catch (Exception e)
             {
-                Logger.Error("Unexpected exception:\n{0}", e);
-            }
-            finally
-            {
-                connectionPool.Release();
+                Logger.Error("[Processor] Unexpected exception:\n{0}", e);
             }
         }
 
-        public void Stop()
-        {
-            UdpListener.Close();
-        }
-
-        private async Task<byte[]> ForwardMessage(DnsMessage message, byte[] originalMessage,
-            IPEndPoint targetNameServer, int queryTimeout, bool useCompressionMutation)
+        private async Task ForwardMessage(DnsMessage message, UdpReceiveResult originalUdpMessage,
+            IPEndPoint targetNameServer, int queryTimeout,
+            bool useCompressionMutation)
         {
             DnsQuestion question = null;
             if (message.Questions.Count > 0)
                 question = message.Questions[0];
 
             byte[] responseBuffer = null;
-            using (var forwarder = new UdpClient())
+            try
             {
-                try
-                {
-                    if ((Equals(targetNameServer.Address, IPAddress.Loopback) ||
-                         Equals(targetNameServer.Address, IPAddress.IPv6Loopback)) &&
-                        targetNameServer.Port == ((IPEndPoint) UdpListener.Client.LocalEndPoint).Port)
-                        throw new InfiniteForwardingException(question);
-                    forwarder.Connect(targetNameServer);
+                if ((Equals(targetNameServer.Address, IPAddress.Loopback) ||
+                     Equals(targetNameServer.Address, IPAddress.IPv6Loopback)) &&
+                    targetNameServer.Port == ((IPEndPoint) _udpListener.Client.LocalEndPoint).Port)
+                    throw new InfiniteForwardingException(question);
 
-                    byte[] sendBuffer;
-                    if (useCompressionMutation)
-                        message.Encode(false, out sendBuffer, true);
-                    else
-                        sendBuffer = originalMessage;
+                byte[] sendBuffer;
+                if (useCompressionMutation)
+                    message.Encode(false, out sendBuffer, true);
+                else
+                    sendBuffer = originalUdpMessage.Buffer;
 
-                    await forwarder.SendAsync(sendBuffer, sendBuffer.Length);
-                    var receiveTask = forwarder.ReceiveAsync();
-                    if (await Task.WhenAny(receiveTask, Task.Delay(queryTimeout)) == receiveTask)
-                    {
-                        var response = await receiveTask;
-                        responseBuffer = response.Buffer;
-                    }
-                    else
-                    {
-                        // Timeout
-                        throw new NameServerTimeoutException();
-                    }
-                }
-                catch (NameServerTimeoutException)
+                _transactionClients[message.TransactionID] = originalUdpMessage.RemoteEndPoint;
+                await _udpForwarder.SendAsync(sendBuffer, sendBuffer.Length, targetNameServer);
+
+                if (_transactionTimeoutCancellationTokenSources.ContainsKey(message.TransactionID))
+                    _transactionTimeoutCancellationTokenSources[message.TransactionID].Cancel();
+                var cancellationTokenSource = new CancellationTokenSource();
+                _transactionTimeoutCancellationTokenSources[message.TransactionID] = cancellationTokenSource;
+                Task.Delay(queryTimeout, cancellationTokenSource.Token).ContinueWith(t =>
                 {
+                    if (!_transactionClients.ContainsKey(message.TransactionID)) return;
+                    IPEndPoint ignoreEndPoint;
+                    CancellationTokenSource ignoreTokenSource;
+                    _transactionClients.TryRemove(message.TransactionID, out ignoreEndPoint);
+                    _transactionTimeoutCancellationTokenSources.TryRemove(message.TransactionID, out ignoreTokenSource);
+
                     var warningText = message.Questions.Count > 0
                         ? string.Format("{0} (Type {1})", message.Questions[0].Name,
                             message.Questions[0].RecordType)
                         : string.Format("Transaction #{0}", message.TransactionID);
                     Logger.Warning("Query timeout for: {0}", warningText);
-                    // Remaining responseBuffer null, don't return any messages to the client.
-                }
-                catch (InfiniteForwardingException e)
-                {
-                    Logger.Warning("Infinite forwarding detected for: {0} (Type {1})", e.Question.Name,
-                        e.Question.RecordType);
-                    Utils.ReturnDnsMessageServerFailure(message, out responseBuffer);
-                }
-                catch (SocketException e)
-                {
-                    if (e.SocketErrorCode == SocketError.ConnectionReset) // Target name server port unreachable
-                        Logger.Warning("Name server port unreachable: {0}", targetNameServer);
-                    else
-                        Logger.Error("Unhandled socket error: {0}", e.Message);
-                    Utils.ReturnDnsMessageServerFailure(message, out responseBuffer);
-                }
-                catch (Exception e)
-                {
-                    Logger.Error("Unexpected exception:\n{0}", e);
-                    Utils.ReturnDnsMessageServerFailure(message, out responseBuffer);
-                }
+                }, cancellationTokenSource.Token);
             }
-            return responseBuffer;
+            catch (InfiniteForwardingException e)
+            {
+                Logger.Warning("[Forwarder.Send] Infinite forwarding detected for: {0} (Type {1})", e.Question.Name,
+                    e.Question.RecordType);
+                Utils.ReturnDnsMessageServerFailure(message, out responseBuffer);
+            }
+            catch (SocketException e)
+            {
+                if (e.SocketErrorCode == SocketError.ConnectionReset) // Target name server port unreachable
+                    Logger.Warning("[Forwarder.Send] Name server port unreachable: {0}", targetNameServer);
+                else
+                    Logger.Error("[Forwarder.Send] Unhandled socket error: {0}", e.Message);
+                Utils.ReturnDnsMessageServerFailure(message, out responseBuffer);
+            }
+            catch (Exception e)
+            {
+                Logger.Error("[Forwarder] Unexpected exception:\n{0}", e);
+                Utils.ReturnDnsMessageServerFailure(message, out responseBuffer);
+            }
+            if (responseBuffer != null)
+                await _udpListener.SendAsync(responseBuffer, responseBuffer.Length, originalUdpMessage.RemoteEndPoint);
         }
+
+        #region Event Invokers
 
         protected virtual void OnStarted()
         {
             var handler = Started;
             if (handler != null) handler();
         }
+
+        protected virtual void OnStopped()
+        {
+            var handler = Stopped;
+            if (handler != null) handler();
+        }
+
+        #endregion
     }
 }

@@ -3,10 +3,10 @@ using ARSoft.Tools.Net.Dns;
 
 namespace DNSAgent
 {
-    /// <summary>
-    ///     Timeout reached when query a remote name server.
-    /// </summary>
-    internal class NameServerTimeoutException : Exception {}
+    ///// <summary>
+    /////     Timeout reached when query a remote name server.
+    ///// </summary>
+    //internal class NameServerTimeoutException : Exception {}
 
     /// <summary>
     ///     When a query is redirected to this name server itself, causing infinite loop.

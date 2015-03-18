@@ -9,13 +9,12 @@ namespace DNSAgent
 
         public static string Title
         {
-            get { return Environment.UserInteractive ? Console.Title : _title; }
+            get { return _title; }
             set
             {
+                _title = value;
                 if (Environment.UserInteractive)
                     Console.Title = value;
-                else
-                    _title = value;
             }
         }
 
@@ -46,6 +45,8 @@ namespace DNSAgent
 
         private static void WriteLine(ConsoleColor textColor, string format, params object[] arg)
         {
+            if (!Environment.UserInteractive)
+                return;
             lock (OutputLock)
             {
                 Console.ForegroundColor = textColor;
