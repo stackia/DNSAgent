@@ -1,4 +1,6 @@
-﻿namespace DNSAgent
+﻿using System.Collections.Generic;
+using System.Net;
+namespace DNSAgent
 {
     internal class Options
     {
@@ -37,5 +39,78 @@
         ///     some network environments.
         /// </summary>
         public bool? CompressionMutation { get; set; }
+
+        /// <summary>
+        ///     Whether to enable caching of responses.
+        /// </summary>
+        public bool? CacheResponse { get; set; }
+
+        /// <summary>
+        ///     How long, in minutes, to cache a repsonse.
+        /// </summary>
+        public int? CacheAge { get; set; }
+
+        /// <summary>
+        ///     Whether or not to filter based on source IP
+        /// </summary>
+        public bool? FilterSourceIP { get; set; }
+
+        /// <summary>
+        ///     List of valid source networks
+        /// </summary>
+        private List<string> _validnetworks;
+        private List<int> _validsourcenetworkmasks = new List<int>();
+        private List<IPAddress> _validsourcenetworks = new List<IPAddress>();
+
+        public List<string> ValidNetworks
+        {
+            get { return _validnetworks; }
+            set
+            {
+                _validnetworks = value;
+                _validsourcenetworks = new List<IPAddress>();
+                _validsourcenetworkmasks = new List<int>();
+                _validnetworks.ForEach(x =>
+                   {
+                       var _pieces = x.Split('/');
+                       var _ip = IPAddress.Parse(_pieces[0]);
+                       var _mask = int.Parse(_pieces[1]);
+                       if (!_validsourcenetworks.Contains(_ip))
+                       {
+                           _validsourcenetworks.Add(_ip);
+                       }
+                       if (!_validsourcenetworkmasks.Contains(_mask))
+                       {
+                           _validsourcenetworkmasks.Add(_mask);
+                       }
+                   });
+
+            }
+        }
+
+       
+        /// <summary>
+        ///     List of valid source networks
+        /// </summary>
+        public List<IPAddress> ValidSourceNetworks
+        {
+            get
+            {
+                return _validsourcenetworks;
+            }
+        }
+
+
+       
+        /// <summary>
+        ///     List of valid source network mask
+        /// </summary>
+        public List<int> ValidSourceNetworkMasks
+        {
+            get
+            {
+                return _validsourcenetworkmasks;
+            }
+        }
     }
 }
