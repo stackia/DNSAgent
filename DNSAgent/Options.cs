@@ -29,6 +29,8 @@ namespace DNSAgent
         /// </summary>
         public string DefaultNameServer { get; set; }
 
+        public bool? UseSystemDNS { get; set; }
+
         /// <summary>
         ///     Timeout for a query, in milliseconds. This may be overridden by rules.cfg for a specific domain name.
         /// </summary>

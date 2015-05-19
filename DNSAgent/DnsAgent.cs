@@ -179,7 +179,7 @@ namespace DnsAgent
                             var _network = IPAddressExtension.GetNetworkAddress(_srcIP, x);
                             if (Options.ValidSourceNetworks.Contains(_network))
                             {
-                                _validIP = true;                                
+                                _validIP = true;
                             }
                         }
                     );
@@ -265,10 +265,45 @@ namespace DnsAgent
 
                 if (message.IsQuery && !handled)
                 {
-                    // Forward query to another name server
-                    await ForwardMessage(message, udpMessage, Utils.CreateIpEndPoint(targetNameServer, 53), queryTimeout, useCompressionMutation);
+                    if (Options.UseSystemDNS == true && (question.RecordType == RecordType.A || question.RecordType == RecordType.Aaaa))
+                    {
+                        var dnsResponse = Dns.GetHostAddresses(question.Name);
+                        foreach (var ip in dnsResponse)
+                        {
+                            if (question.RecordType == RecordType.A &&
+                               ip.AddressFamily == AddressFamily.InterNetwork)
+                            {
+                                var answer = new ARecord(question.Name, 0, ip);
+                                if (!message.AnswerRecords.Contains(answer))
+                                {
+                                    message.AnswerRecords.Add(answer);
+                                }
+
+                            }
+                            else if (question.RecordType == RecordType.Aaaa &&
+                                     ip.AddressFamily == AddressFamily.InterNetworkV6)
+                            {
+                                var answer = new AaaaRecord(question.Name, 0, ip);
+                                if (!message.AnswerRecords.Contains(answer))
+                                {
+                                    message.AnswerRecords.Add(answer);
+                                }
+                            }
+                            else
+                            { // Type mismatch
+                                continue;
+                            }
+                        }
+                        handled = true;
+                    }
+                    else
+                    {
+                        // Forward query to another name server
+                        await ForwardMessage(message, udpMessage, Utils.CreateIpEndPoint(targetNameServer, 53), queryTimeout, useCompressionMutation);
+                    }
                 }
-                else
+
+                if (handled)
                 {
                     // Already answered, directly return to the client
                     byte[] responseBuffer;
