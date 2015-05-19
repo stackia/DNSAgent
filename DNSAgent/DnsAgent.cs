@@ -157,11 +157,14 @@ namespace DnsAgent
         {
             try
             {
-                DnsMessage message;
                 bool handled = false;
+                DnsMessage message;                
+                DnsQuestion question;
+
                 try
                 {
                     message = DnsMessage.Parse(udpMessage.Buffer);
+                    question = message.Questions[0];
                 }
                 catch (Exception)
                 {
@@ -185,7 +188,7 @@ namespace DnsAgent
                     );
                     if (!_validIP)
                     {
-                        Logger.Info("-> {0} Is not Authorized.", udpMessage.RemoteEndPoint.Address);
+                        Logger.Info("-> {0} Is not Authorized. They requested {1}", udpMessage.RemoteEndPoint.Address, question);
                         return;
                     }
                 }
@@ -199,7 +202,7 @@ namespace DnsAgent
                 var useCompressionMutation = Options.CompressionMutation.Value;
 
 
-                var question = message.Questions[0];
+               
                 Logger.Info("-> {0} has requested {1}", udpMessage.RemoteEndPoint.Address, question.Name);
                 if (Options.CacheResponse == true)
                 {
