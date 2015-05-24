@@ -85,3 +85,11 @@ IPv6 address will only be returned when the client querys for AAAA records.
 ```
 
 You can press `Ctrl + R` to reload all configurations without restart this program.
+
+# License
+
+The project is released under [MIT License](https://github.com/stackia/DNSAgent/blob/master/LICENSE).
+
+The project uses a modified version of [ARSoft.Tools.Net](http://arsofttoolsnet.codeplex.com/), which is released under [Apache License 2.0](http://arsofttoolsnet.codeplex.com/license). [The modification](https://github.com/stackia/DNSAgent/blob/master/ARSoft.Tools.Net/Dns/DnsMessageBase.cs#L865) enables compression pointer on DNS questions, which shouldn't be done normally according to RFC, but it can be used to bypass DNS poisoning under certain environments.
+
+ARSoft.Tools.Net is an excellent DNS library purely written in C#. Thanks to their great work for .NET community!
