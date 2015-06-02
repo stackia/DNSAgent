@@ -37,13 +37,11 @@ namespace DnsAgent
                 switch (parameter)
                 {
                     case "--install":
-                        ManagedInstallerClass.InstallHelper(new[]
-                        {"/LogFile=", Assembly.GetExecutingAssembly().Location});
+                        ManagedInstallerClass.InstallHelper(new[] { "/LogFile=", Assembly.GetExecutingAssembly().Location });
                         return;
 
                     case "--uninstall":
-                        ManagedInstallerClass.InstallHelper(new[]
-                        {"/LogFile=", "/u", Assembly.GetExecutingAssembly().Location});
+                        ManagedInstallerClass.InstallHelper(new[] { "/LogFile=", "/u", Assembly.GetExecutingAssembly().Location });
                         return;
                 }
                 Start(args);
@@ -128,7 +126,9 @@ namespace DnsAgent
                 Application.Run();
             }
             else
+            {
                 _dnsAgent.Start();
+            }
         }
 
         private static void Stop()
@@ -148,7 +148,8 @@ namespace DnsAgent
         {
             _dnsAgent.Options = ReadOptions();
             _dnsAgent.Rules = ReadRules();
-            Logger.Info("Options and rules reloaded.");
+            _dnsAgent.Cache.Clear();
+            Logger.Info("Options and rules reloaded. Cache cleared.");
         }
 
         #region Nested class to support running as service
@@ -216,7 +217,16 @@ namespace DnsAgent
             using (var jsonTextReader = new JsonTextReader(reader))
             {
                 var serializer = JsonSerializer.CreateDefault();
-                rules = serializer.Deserialize<Rules>(jsonTextReader) ?? new Rules();
+                try
+                {
+                    rules = serializer.Deserialize<Rules>(jsonTextReader) ?? new Rules();
+                }
+                catch (Exception e)
+                {
+                    Logger.Info("Error loading rules: {0}", e);
+                    rules = new Rules();
+                }
+
             }
             return rules;
         }
