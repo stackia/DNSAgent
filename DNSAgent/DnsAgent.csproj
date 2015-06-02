@@ -56,7 +56,6 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Cache.cs" />
     <Compile Include="DnsAgent.cs" />
     <Compile Include="Exceptions.cs" />
     <Compile Include="Logger.cs" />

@@ -37,11 +37,13 @@ namespace DnsAgent
                 switch (parameter)
                 {
                     case "--install":
-                        ManagedInstallerClass.InstallHelper(new[] { "/LogFile=", Assembly.GetExecutingAssembly().Location });
+                        ManagedInstallerClass.InstallHelper(new[]
+                        {"/LogFile=", Assembly.GetExecutingAssembly().Location});
                         return;
 
                     case "--uninstall":
-                        ManagedInstallerClass.InstallHelper(new[] { "/LogFile=", "/u", Assembly.GetExecutingAssembly().Location });
+                        ManagedInstallerClass.InstallHelper(new[]
+                        {"/LogFile=", "/u", Assembly.GetExecutingAssembly().Location});
                         return;
                 }
                 Start(args);
@@ -50,7 +52,7 @@ namespace DnsAgent
 
         private static void Start(string[] args)
         {
-            Logger.Title = string.Format("DNSAgent - Starting ...");
+            Logger.Title = "DNSAgent - Starting ...";
 
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             var buildTime = Utils.RetrieveLinkerTimestamp(Assembly.GetExecutingAssembly().Location);
@@ -91,17 +93,17 @@ namespace DnsAgent
                 var hideOnStart = _dnsAgent.Options.HideOnStart ?? false;
                 var hideMenuItem = new MenuItem(hideOnStart ? "Show" : "Hide");
                 if (hideOnStart)
-                    ShowWindow(GetConsoleWindow(), SW_HIDE);
+                    ShowWindow(GetConsoleWindow(), SwHide);
                 hideMenuItem.Click += (sender, eventArgs) =>
                 {
                     if (hideMenuItem.Text == "Hide")
                     {
-                        ShowWindow(GetConsoleWindow(), SW_HIDE);
+                        ShowWindow(GetConsoleWindow(), SwHide);
                         hideMenuItem.Text = "Show";
                     }
                     else
                     {
-                        ShowWindow(GetConsoleWindow(), SW_SHOW);
+                        ShowWindow(GetConsoleWindow(), SwShow);
                         hideMenuItem.Text = "Hide";
                     }
                 };
@@ -126,9 +128,7 @@ namespace DnsAgent
                 Application.Run();
             }
             else
-            {
                 _dnsAgent.Start();
-            }
         }
 
         private static void Stop()
@@ -148,7 +148,7 @@ namespace DnsAgent
         {
             _dnsAgent.Options = ReadOptions();
             _dnsAgent.Rules = ReadRules();
-            _dnsAgent.Cache.Clear();
+            //_dnsAgent.Cache.Clear();
             Logger.Info("Options and rules reloaded. Cache cleared.");
         }
 
@@ -184,8 +184,8 @@ namespace DnsAgent
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
-        private const int SW_HIDE = 0;
-        private const int SW_SHOW = 5;
+        private const int SwHide = 0;
+        private const int SwShow = 5;
 
         #endregion
 
@@ -217,16 +217,7 @@ namespace DnsAgent
             using (var jsonTextReader = new JsonTextReader(reader))
             {
                 var serializer = JsonSerializer.CreateDefault();
-                try
-                {
-                    rules = serializer.Deserialize<Rules>(jsonTextReader) ?? new Rules();
-                }
-                catch (Exception e)
-                {
-                    Logger.Info("Error loading rules: {0}", e);
-                    rules = new Rules();
-                }
-
+                rules = serializer.Deserialize<Rules>(jsonTextReader) ?? new Rules();
             }
             return rules;
         }

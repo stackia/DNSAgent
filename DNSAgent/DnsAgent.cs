@@ -1,12 +1,14 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
-using ARSoft.Tools.Net.Dns;
 using ARSoft.Tools.Net;
+using ARSoft.Tools.Net.Dns;
 using DNSAgent;
 
 namespace DnsAgent
@@ -15,23 +17,45 @@ namespace DnsAgent
     {
         private Task _forwardingTask;
         private Task _listeningTask;
+        private List<KeyValuePair<IPAddress, int>> _networkWhitelist; // Key for address, value for mask
+        private Options _options;
         private CancellationTokenSource _stopTokenSource;
         private ConcurrentDictionary<ushort, IPEndPoint> _transactionClients;
         private ConcurrentDictionary<ushort, CancellationTokenSource> _transactionTimeoutCancellationTokenSources;
         private UdpClient _udpForwarder;
         private UdpClient _udpListener;
-        private System.Object lockThis = new System.Object();
+        //private System.Object lockThis = new System.Object();
 
         public DnsAgent(Options options, Rules rules)
         {
             Options = options ?? new Options();
             Rules = rules ?? new Rules();
-            Cache = new Cache();
+            //Cache = new Cache();
         }
 
-        public Options Options { get; set; }
+        public Options Options
+        {
+            get { return _options; }
+            set
+            {
+                _options = value;
+                if (_options.NetworkWhitelist == null)
+                    _networkWhitelist = null;
+                else
+                {
+                    _networkWhitelist = _options.NetworkWhitelist.Select(s =>
+                    {
+                        var pieces = s.Split('/');
+                        var ip = IPAddress.Parse(pieces[0]);
+                        var mask = int.Parse(pieces[1]);
+                        return new KeyValuePair<IPAddress, int>(ip, mask);
+                    }).ToList();
+                }
+            }
+        }
+
         public Rules Rules { get; set; }
-        public Cache Cache { get; set; }
+        //public Cache Cache { get; set; }
         public event Action Started;
         public event Action Stopped;
 
@@ -51,20 +75,30 @@ namespace DnsAgent
                     try
                     {
                         var query = await _udpListener.ReceiveAsync();
-                        await Task.Run(() => ProcessMessage(query));
+                        ProcessMessageAsync(query);
                     }
                     catch (SocketException e)
                     {
                         if (e.SocketErrorCode != SocketError.ConnectionReset)
                             Logger.Error("[Listener.Receive] Unexpected socket error:\n{0}", e);
                     }
-                    catch (ObjectDisposedException) { } // Force closing _udpListener will cause this exception
+                    catch (AggregateException e)
+                    {
+                        var socketException = e.InnerException as SocketException;
+                        if (socketException != null)
+                        {
+                            if (socketException.SocketErrorCode != SocketError.ConnectionReset)
+                                Logger.Error("[Listener.Receive] Unexpected socket error:\n{0}", e);
+                        }
+                        else
+                            Logger.Error("[Listener] Unexpected exception:\n{0}", e);
+                    }
+                    catch (ObjectDisposedException) {} // Force closing _udpListener will cause this exception
                     catch (Exception e)
                     {
                         Logger.Error("[Listener] Unexpected exception:\n{0}", e);
                     }
                 }
-                _stopTokenSource.Token.ThrowIfCancellationRequested();
             }, _stopTokenSource.Token);
 
             _forwardingTask = Task.Run(async () =>
@@ -89,15 +123,15 @@ namespace DnsAgent
                         _transactionClients.TryRemove(message.TransactionID, out remoteEndPoint);
                         _transactionTimeoutCancellationTokenSources.TryRemove(message.TransactionID, out ignore);
                         await _udpListener.SendAsync(query.Buffer, query.Buffer.Length, remoteEndPoint);
-                        lock (lockThis)
-                        {
-                            if (Options.CacheResponse == true && !Cache.ContainsKey(message.Questions[0].Name))
-                            {
-                                Cache.Add(message.Questions[0].Name, new CacheItem() { ResponseMessage = message });
-                            }
-                        }
+                        //lock (lockThis)
+                        //{
+                        //    if (Options.CacheResponse == true && !Cache.ContainsKey(message.Questions[0].Name))
+                        //    {
+                        //        Cache.Add(message.Questions[0].Name, new CacheItem() { ResponseMessage = message });
+                        //    }
+                        //}
                     }
-                    catch (ParsingException) { }
+                    catch (ParsingException) {}
                     catch (SocketException e)
                     {
                         if (e.SocketErrorCode != SocketError.ConnectionReset)
@@ -105,14 +139,13 @@ namespace DnsAgent
                         else
                             Logger.Error("[Forwarder.Receive] Unexpected socket error:\n{0}", e);
                     }
-                    catch (ObjectDisposedException) { } // Force closing _udpListener will cause this exception
+                    catch (ObjectDisposedException) {} // Force closing _udpListener will cause this exception
                     catch (Exception e)
                     {
                         Logger.Error("[Forwarder] Unexpected exception:\n{0}", e);
                     }
                 }
-                _stopTokenSource.Token.ThrowIfCancellationRequested();
-            });
+            }, _stopTokenSource.Token);
 
             Logger.Info("DNSAgent has been started.");
             Logger.Info("Listening on {0}...", endPoint);
@@ -139,7 +172,7 @@ namespace DnsAgent
                 if (_forwardingTask != null)
                     _forwardingTask.Wait();
             }
-            catch (AggregateException) { }
+            catch (AggregateException) {}
 
             _stopTokenSource = null;
             _udpListener = null;
@@ -153,188 +186,173 @@ namespace DnsAgent
             OnStopped();
         }
 
-        private async Task ProcessMessage(UdpReceiveResult udpMessage)
+        private async void ProcessMessageAsync(UdpReceiveResult udpMessage)
         {
-            try
+            await Task.Run(async () =>
             {
-                bool handled = false;
-                DnsMessage message;                
-                DnsQuestion question;
-
                 try
                 {
-                    message = DnsMessage.Parse(udpMessage.Buffer);
-                    question = message.Questions[0];
-                }
-                catch (Exception)
-                {
-                    throw new ParsingException();
-                }
+                    DnsMessage message;
+                    DnsQuestion question;
 
-                // Check for authorized subnet access
-                if (Options.FilterSourceIP == true)
-                {
-                    var _srcIP = udpMessage.RemoteEndPoint.Address;
-                    var _validIP = false;
-
-                    Options.ValidSourceNetworkMasks.ForEach(x =>
-                        {
-                            var _network = IPAddressExtension.GetNetworkAddress(_srcIP, x);
-                            if (Options.ValidSourceNetworks.Contains(_network))
-                            {
-                                _validIP = true;
-                            }
-                        }
-                    );
-                    if (!_validIP)
+                    try
                     {
-                        Logger.Info("-> {0} Is not Authorized. They requested {1}", udpMessage.RemoteEndPoint.Address, question);
-                        return;
+                        message = DnsMessage.Parse(udpMessage.Buffer);
+                        question = message.Questions[0];
                     }
-                }
-
-                var targetNameServer = Options.DefaultNameServer;
-                if (Options.QueryTimeout == null)
-                    throw new NullReferenceException();
-                if (Options.CompressionMutation == null)
-                    throw new NullReferenceException();
-                var queryTimeout = Options.QueryTimeout.Value;
-                var useCompressionMutation = Options.CompressionMutation.Value;
-
-
-               
-                Logger.Info("-> {0} has requested {1}", udpMessage.RemoteEndPoint.Address, question.Name);
-                if (Options.CacheResponse == true)
-                {
-                    if (Cache.ContainsKey(question.Name))
+                    catch (Exception)
                     {
-                        var responseItem = Cache[question.Name];
-                        if (responseItem.Age < Options.CacheAge)
-                        {
-                            var _newTransID = message.TransactionID;
-                            var _newTsig = message.TSigOptions;
-                            Logger.Info("-> Served from Cache, reusing transaction id: {0}", responseItem.ResponseMessage.TransactionID);
-                            handled = true;
-                            message = responseItem.ResponseMessage;
-                            message.TransactionID = _newTransID;
-                            message.TSigOptions = _newTsig;
-                        }
-                        else
-                        {
-                            Cache.Remove(question.Name);
-                        }
+                        throw new ParsingException();
                     }
-                }
-                // Match rules
-                if (!handled && (question.RecordType == RecordType.A || question.RecordType == RecordType.Aaaa))
-                {
-                    for (var i = Rules.Count - 1; i >= 0; i--)
+
+                    // Check for authorized subnet access
+                    if (_networkWhitelist != null)
                     {
-                        if (!Regex.IsMatch(question.Name, Rules[i].Pattern)) continue;
-
-                        // Domain name matched
-                        if (Rules[i].Address != null)
+                        if (_networkWhitelist.All(pair =>
+                            !pair.Key.GetNetworkAddress(pair.Value)
+                                .Equals(udpMessage.RemoteEndPoint.Address.GetNetworkAddress(pair.Value))))
                         {
-                            IPAddress ip;
-                            IPAddress.TryParse(Rules[i].Address, out ip);
-                            if (ip == null) continue; // Invalid rule
-
-                            if (question.RecordType == RecordType.A &&
-                                ip.AddressFamily == AddressFamily.InterNetwork)
-                                message.AnswerRecords.Add(new ARecord(question.Name, 0, ip));
-                            else if (question.RecordType == RecordType.Aaaa &&
-                                     ip.AddressFamily == AddressFamily.InterNetworkV6)
-                                message.AnswerRecords.Add(new AaaaRecord(question.Name, 0, ip));
-                            else // Type mismatch
-                                continue;
-
-                            message.ReturnCode = ReturnCode.NoError;
+                            Logger.Info("-> {0} is not authorized, who requested {1}.",
+                                udpMessage.RemoteEndPoint.Address,
+                                question);
+                            message.ReturnCode = ReturnCode.Refused;
                             message.IsQuery = false;
                         }
-                        else
-                        {
-                            if (Rules[i].NameServer != null) // Name server override
-                            {
-                                targetNameServer = Rules[i].NameServer;
-                                if (Rules[i].CompressionMutation != null)
-                                    useCompressionMutation = Rules[i].CompressionMutation.Value;
-                            }
-
-                            if (Rules[i].QueryTimeout != null) // Query timeout override
-                                queryTimeout = Rules[i].QueryTimeout.Value;
-                        }
                     }
-                }
+                    Logger.Info("-> {0} requested {1} (Type {2})", udpMessage.RemoteEndPoint.Address, question.Name,
+                        question.RecordType);
 
-                if (message.IsQuery && !handled)
-                {
-                    if (Options.UseSystemDNS == true && (question.RecordType == RecordType.A || question.RecordType == RecordType.Aaaa))
+                    // Query cache
+                    //if (Options.CacheResponse == true)
+                    //{
+                    //    if (Cache.ContainsKey(question.Name))
+                    //    {
+                    //        var responseItem = Cache[question.Name];
+                    //        if (responseItem.Age < Options.CacheAge)
+                    //        {
+                    //            var _newTransID = message.TransactionID;
+                    //            var _newTsig = message.TSigOptions;
+                    //            Logger.Info("-> Served from Cache, reusing transaction id: {0}", responseItem.ResponseMessage.TransactionID);
+                    //            handled = true;
+                    //            message = responseItem.ResponseMessage;
+                    //            message.TransactionID = _newTransID;
+                    //            message.TSigOptions = _newTsig;
+                    //        }
+                    //        else
+                    //        {
+                    //            Cache.Remove(question.Name);
+                    //        }
+                    //    }
+                    //}
+
+                    var targetNameServer = Options.DefaultNameServer;
+                    if (Options.QueryTimeout == null)
+                        throw new NullReferenceException();
+                    if (Options.CompressionMutation == null)
+                        throw new NullReferenceException();
+                    var queryTimeout = Options.QueryTimeout.Value;
+                    var useCompressionMutation = Options.CompressionMutation.Value;
+
+                    // Match rules
+                    if (message.IsQuery &&
+                        (question.RecordType == RecordType.A || question.RecordType == RecordType.Aaaa))
                     {
-                        var dnsResponse = Dns.GetHostAddresses(question.Name);
-                        foreach (var ip in dnsResponse)
+                        for (var i = Rules.Count - 1; i >= 0; i--)
                         {
-                            if (question.RecordType == RecordType.A &&
-                               ip.AddressFamily == AddressFamily.InterNetwork)
-                            {
-                                var answer = new ARecord(question.Name, 0, ip);
-                                if (!message.AnswerRecords.Contains(answer))
-                                {
-                                    message.AnswerRecords.Add(answer);
-                                }
+                            if (!Regex.IsMatch(question.Name, Rules[i].Pattern)) continue;
 
-                            }
-                            else if (question.RecordType == RecordType.Aaaa &&
-                                     ip.AddressFamily == AddressFamily.InterNetworkV6)
+                            // Domain name matched
+                            if (Rules[i].Address != null)
                             {
-                                var answer = new AaaaRecord(question.Name, 0, ip);
-                                if (!message.AnswerRecords.Contains(answer))
-                                {
-                                    message.AnswerRecords.Add(answer);
-                                }
+                                IPAddress ip;
+                                IPAddress.TryParse(Rules[i].Address, out ip);
+                                if (ip == null) continue; // Invalid rule
+
+                                if (question.RecordType == RecordType.A &&
+                                    ip.AddressFamily == AddressFamily.InterNetwork)
+                                    message.AnswerRecords.Add(new ARecord(question.Name, 0, ip));
+                                else if (question.RecordType == RecordType.Aaaa &&
+                                         ip.AddressFamily == AddressFamily.InterNetworkV6)
+                                    message.AnswerRecords.Add(new AaaaRecord(question.Name, 0, ip));
+                                else // Type mismatch
+                                    continue;
+
+                                message.ReturnCode = ReturnCode.NoError;
+                                message.IsQuery = false;
                             }
                             else
-                            { // Type mismatch
-                                continue;
+                            {
+                                if (Rules[i].NameServer != null) // Name server override
+                                {
+                                    targetNameServer = Rules[i].NameServer;
+                                    if (Rules[i].CompressionMutation != null)
+                                        useCompressionMutation = Rules[i].CompressionMutation.Value;
+                                }
+
+                                if (Rules[i].QueryTimeout != null) // Query timeout override
+                                    queryTimeout = Rules[i].QueryTimeout.Value;
                             }
                         }
-                        handled = true;
+                    }
+
+                    // Using System.Net.Dns to forward query if compression mutation is disabled
+                    //if (message.IsQuery && !useCompressionMutation &&
+                    //    (question.RecordType == RecordType.A || question.RecordType == RecordType.Aaaa))
+                    //{
+                    //    var dnsResponse = await Dns.GetHostAddressesAsync(question.Name);
+
+                    //    if (question.RecordType == RecordType.A)
+                    //    {
+                    //        message.AnswerRecords.AddRange(dnsResponse.Where(
+                    //            ip => ip.AddressFamily == AddressFamily.InterNetwork).Select(
+                    //                ip => new ARecord(question.Name, 0, ip)));
+                    //    }
+                    //    else if (question.RecordType == RecordType.Aaaa)
+                    //    {
+                    //        message.AnswerRecords.AddRange(dnsResponse.Where(
+                    //            ip => ip.AddressFamily == AddressFamily.InterNetworkV6).Select(
+                    //                ip => new AaaaRecord(question.Name, 0, ip)));
+                    //    }
+                    //    message.ReturnCode = ReturnCode.NoError;
+                    //    message.IsQuery = false;
+                    //}
+
+                    if (message.IsQuery)
+                    {
+                        // Use internal forwarder to forward query to another name server
+                        await
+                            ForwardMessage(message, udpMessage, Utils.CreateIpEndPoint(targetNameServer, 53),
+                                queryTimeout, useCompressionMutation);
                     }
                     else
                     {
-                        // Forward query to another name server
-                        await ForwardMessage(message, udpMessage, Utils.CreateIpEndPoint(targetNameServer, 53), queryTimeout, useCompressionMutation);
-                    }
-                }
-
-                if (handled)
-                {
-                    // Already answered, directly return to the client
-                    byte[] responseBuffer;
-                    message.Encode(false, out responseBuffer);
-                    if (responseBuffer != null)
-                    {
-                        await _udpListener.SendAsync(responseBuffer, responseBuffer.Length, udpMessage.RemoteEndPoint);
-                        lock (lockThis)
+                        // Already answered, directly return to the client
+                        byte[] responseBuffer;
+                        message.Encode(false, out responseBuffer);
+                        if (responseBuffer != null)
                         {
-                            if (Options.CacheResponse == true && !Cache.ContainsKey(message.Questions[0].Name))
-                            {
-                                Cache.Add(message.Questions[0].Name, new CacheItem() { ResponseMessage = message });
-                            }
+                            await
+                                _udpListener.SendAsync(responseBuffer, responseBuffer.Length, udpMessage.RemoteEndPoint);
+                            //lock (lockThis)
+                            //{
+                            //    if (Options.CacheResponse == true && !Cache.ContainsKey(message.Questions[0].Name))
+                            //    {
+                            //        Cache.Add(message.Questions[0].Name, new CacheItem() { ResponseMessage = message });
+                            //    }
+                            //}
                         }
                     }
-
                 }
-
-            }
-            catch (ParsingException) { }
-            catch (SocketException e)
-            {
-                Logger.Error("[Listener.Send] Unexpected socket error:\n{0}", e);
-            }
-            catch (Exception e)
-            {
-                Logger.Error("[Processor] Unexpected exception:\n{0}", e);
-            }
+                catch (ParsingException) {}
+                catch (SocketException e)
+                {
+                    Logger.Error("[Listener.Send] Unexpected socket error:\n{0}", e);
+                }
+                catch (Exception e)
+                {
+                    Logger.Error("[Processor] Unexpected exception:\n{0}", e);
+                }
+            });
         }
 
         private async Task ForwardMessage(DnsMessage message, UdpReceiveResult originalUdpMessage,
@@ -350,18 +368,14 @@ namespace DnsAgent
             {
                 if ((Equals(targetNameServer.Address, IPAddress.Loopback) ||
                      Equals(targetNameServer.Address, IPAddress.IPv6Loopback)) &&
-                    targetNameServer.Port == ((IPEndPoint)_udpListener.Client.LocalEndPoint).Port)
+                    targetNameServer.Port == ((IPEndPoint) _udpListener.Client.LocalEndPoint).Port)
                     throw new InfiniteForwardingException(question);
 
                 byte[] sendBuffer;
                 if (useCompressionMutation)
-                {
                     message.Encode(false, out sendBuffer, true);
-                }
                 else
-                {
                     sendBuffer = originalUdpMessage.Buffer;
-                }
 
                 _transactionClients[message.TransactionID] = originalUdpMessage.RemoteEndPoint;
 
@@ -374,21 +388,23 @@ namespace DnsAgent
                 _transactionTimeoutCancellationTokenSources[message.TransactionID] = cancellationTokenSource;
 
                 // Timeout task to cancel the request
-                await Task.Delay(queryTimeout, cancellationTokenSource.Token).ContinueWith(t =>
-                  {
-                      if (!_transactionClients.ContainsKey(message.TransactionID)) return;
-                      IPEndPoint ignoreEndPoint;
-                      CancellationTokenSource ignoreTokenSource;
-                      _transactionClients.TryRemove(message.TransactionID, out ignoreEndPoint);
-                      _transactionTimeoutCancellationTokenSources.TryRemove(message.TransactionID, out ignoreTokenSource);
+                try
+                {
+                    await Task.Delay(queryTimeout, cancellationTokenSource.Token);
+                    if (!_transactionClients.ContainsKey(message.TransactionID)) return;
+                    IPEndPoint ignoreEndPoint;
+                    CancellationTokenSource ignoreTokenSource;
+                    _transactionClients.TryRemove(message.TransactionID, out ignoreEndPoint);
+                    _transactionTimeoutCancellationTokenSources.TryRemove(message.TransactionID,
+                        out ignoreTokenSource);
 
-                      var warningText = message.Questions.Count > 0
-                          ? string.Format("{0} (Type {1})", message.Questions[0].Name,
-                              message.Questions[0].RecordType)
-                          : string.Format("Transaction #{0}", message.TransactionID);
-                      Logger.Warning("Query timeout for: {0}", warningText);
-                  }, cancellationTokenSource.Token);
-
+                    var warningText = message.Questions.Count > 0
+                        ? string.Format("{0} (Type {1})", message.Questions[0].Name,
+                            message.Questions[0].RecordType)
+                        : string.Format("Transaction #{0}", message.TransactionID);
+                    Logger.Warning("Query timeout for: {0}", warningText);
+                }
+                catch (TaskCanceledException) {}
             }
             catch (InfiniteForwardingException e)
             {
@@ -410,18 +426,9 @@ namespace DnsAgent
                 Utils.ReturnDnsMessageServerFailure(message, out responseBuffer);
             }
 
+            // If we got some errors
             if (responseBuffer != null)
-            {
-                // Respond to user - don't need to await this one
                 await _udpListener.SendAsync(responseBuffer, responseBuffer.Length, originalUdpMessage.RemoteEndPoint);
-                lock (lockThis)
-                {
-                    if (Options.CacheResponse == true && !Cache.ContainsKey(message.Questions[0].Name))
-                    {
-                        Cache.Add(message.Questions[0].Name, new CacheItem() { ResponseMessage = message });
-                    }
-                }
-            }
         }
 
         #region Event Invokers
