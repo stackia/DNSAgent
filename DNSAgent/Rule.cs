@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using Newtonsoft.Json;
 
 namespace DnsAgent
 {
@@ -6,9 +7,19 @@ namespace DnsAgent
 
     internal class Rule
     {
+        public Rule()
+        {
+            Pattern = "$^";
+            Address = "127.0.0.1";
+            NameServer = null;
+            QueryTimeout = null;
+            CompressionMutation = null;
+        }
+
         /// <summary>
         ///     Regex pattern to match the domain name.
         /// </summary>
+        [JsonProperty(Required = Required.Always)]
         public string Pattern { get; set; }
 
         /// <summary>
@@ -17,18 +28,18 @@ namespace DnsAgent
         public string Address { get; set; }
 
         /// <summary>
-        ///     The name server used to query about this domain name. If "Address" is not null, this will be ignored.
+        ///     The name server used to query about this domain name. If "Address" is set, this will be ignored.
         /// </summary>
         public string NameServer { get; set; }
 
         /// <summary>
-        ///     Timeout for the query, in milliseconds. This overrides options.cfg. If "Address" is not null, this will be ignored.
+        ///     Timeout for the query, in milliseconds. This overrides options.cfg. If "Address" is set, this will be ignored.
         /// </summary>
         public int? QueryTimeout { get; set; }
 
         /// <summary>
-        ///     Whether to enable compression pointer mutation to query this name server. If "Address" is not null or "NameServer"
-        ///     is null, this will be ignored.
+        ///     Whether to enable compression pointer mutation to query this name server. If "Address" is set, this will be
+        ///     ignored.
         /// </summary>
         public bool? CompressionMutation { get; set; }
     }

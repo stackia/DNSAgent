@@ -57,6 +57,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="DnsAgent.cs" />
+    <Compile Include="DnsMessageCache.cs" />
     <Compile Include="Exceptions.cs" />
     <Compile Include="Logger.cs" />
     <Compile Include="Options.cs" />

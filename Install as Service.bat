@@ -26,3 +26,4 @@ if '%errorlevel%' NEQ '0' (
     CD /D "%~dp0"
 :--------------------------------------
 "./DNSAgent.exe" --install
+pause

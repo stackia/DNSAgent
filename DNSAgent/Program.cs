@@ -65,7 +65,11 @@ namespace DnsAgent
             {
                 var startedWaitHandler = new ManualResetEvent(false);
                 _dnsAgent.Started += () => { startedWaitHandler.Set(); };
-                _dnsAgent.Start();
+                if (!_dnsAgent.Start())
+                {
+                    PressAnyKeyToContinue();
+                    return;
+                }
                 startedWaitHandler.WaitOne();
                 Logger.Info("Press Ctrl-R to reload configurations, Ctrl-Q to stop and quit.");
 
@@ -90,7 +94,7 @@ namespace DnsAgent
                     }
                 });
 
-                var hideOnStart = _dnsAgent.Options.HideOnStart ?? false;
+                var hideOnStart = _dnsAgent.Options.HideOnStart;
                 var hideMenuItem = new MenuItem(hideOnStart ? "Show" : "Hide");
                 if (hideOnStart)
                     ShowWindow(GetConsoleWindow(), SwHide);
@@ -111,7 +115,7 @@ namespace DnsAgent
                 {
                     hideMenuItem,
                     new MenuItem("Reload", (sender, eventArgs) => Reload()),
-                    new MenuItem("Exit", (sender, eventArgs) => Stop())
+                    new MenuItem("Exit", (sender, eventArgs) => Stop(false))
                 });
                 _notifyIcon = new NotifyIcon
                 {
@@ -131,7 +135,7 @@ namespace DnsAgent
                 _dnsAgent.Start();
         }
 
-        private static void Stop()
+        private static void Stop(bool pressAnyKeyToContinue = true)
         {
             if (_dnsAgent != null)
                 _dnsAgent.Stop();
@@ -140,6 +144,8 @@ namespace DnsAgent
             {
                 _notifyIcon.Dispose();
                 _contextMenu.Dispose();
+                if (pressAnyKeyToContinue)
+                    PressAnyKeyToContinue();
                 Application.Exit();
             }
         }
@@ -148,8 +154,14 @@ namespace DnsAgent
         {
             _dnsAgent.Options = ReadOptions();
             _dnsAgent.Rules = ReadRules();
-            //_dnsAgent.Cache.Clear();
+            _dnsAgent.Cache.Clear();
             Logger.Info("Options and rules reloaded. Cache cleared.");
+        }
+
+        private static void PressAnyKeyToContinue()
+        {
+            Logger.Info("Press any key to continue . . . ");
+            Console.ReadKey(true);
         }
 
         #region Nested class to support running as service
