@@ -39,7 +39,7 @@ A sample configuration:
 ### options.cfg:
 ```
 {
-    "HideOnStart": true,
+    "HideOnStart": false,
     "ListenOn": "127.0.0.1:53",
     "DefaultNameServer": "8.8.8.8:53",
     "QueryTimeout": 4000,
