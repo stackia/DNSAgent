@@ -10,9 +10,9 @@ namespace DNSAgent
         public DnsCacheMessageEntry(DnsMessage message, int timeToLive)
         {
             Message = message;
-            timeToLive =
-                Math.Max(message.AnswerRecords.Concat(message.AuthorityRecords).Min(record => record.TimeToLive),
-                    timeToLive);
+            var records = message.AnswerRecords.Concat(message.AuthorityRecords).ToList();
+            if (records.Any())
+                timeToLive = Math.Max(records.Min(record => record.TimeToLive), timeToLive);
             ExpireTime = DateTime.Now.AddSeconds(timeToLive);
         }
 
