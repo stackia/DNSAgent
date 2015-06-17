@@ -201,7 +201,7 @@ namespace DnsAgent
                 {
                     DnsMessage message;
                     DnsQuestion question;
-                    var responseFromCache = false;
+                    var respondedFromCache = false;
 
                     try
                     {
@@ -241,9 +241,10 @@ namespace DnsAgent
                                 var cachedMessage = entry.Message;
                                 Logger.Info("-> #{0} served from cache.", message.TransactionID,
                                     cachedMessage.TransactionID);
-                                cachedMessage.TransactionID = message.TransactionID;
+                                cachedMessage.TransactionID = message.TransactionID; // Update transaction ID
+                                cachedMessage.TSigOptions = message.TSigOptions; // Update TSig options
                                 message = cachedMessage;
-                                responseFromCache = true;
+                                respondedFromCache = true;
                             }
                         }
                     }
@@ -334,7 +335,7 @@ namespace DnsAgent
                                 _udpListener.SendAsync(responseBuffer, responseBuffer.Length, udpMessage.RemoteEndPoint);
 
                             // Update cache
-                            if (Options.CacheResponse && !responseFromCache)
+                            if (Options.CacheResponse && !respondedFromCache)
                                 Cache.Update(question, message, Options.CacheAge);
                         }
                     }
