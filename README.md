@@ -5,12 +5,17 @@ A powerful "hosts" replacement.
 
 * Use regular expression to match the domain name.
 * Both IPv4 and IPv6 are supported.
+* Support non-standard listening port (ports other than 53).
 * Return a immediate address (A/AAAA record) or redirect query to a custom name server on pattern matched.
 * Local cache with custom TTL settings.
 * Support source IP whitelist to filter unauthorized clients.
 * Support compression pointer mutation when querying another name server. This may avoid MITM attack in some network environments.
 
-## Requirement
+## Download
+
+You can always get the latest release here: https://github.com/stackia/DNSAgent/releases/latest
+
+### Requirement
 
 * .NET Framework 4.5+ (not compatible with Windows XP)
 
@@ -28,7 +33,7 @@ Edit `rules.cfg` to customize your rules.
 
 Both `options.cfg` and `rules.cfg` are standord JSON files, your can use any of your favorite editors to open them.
 
-Launch `DNSAgent.exe` and change your system DNS settings to 127.0.0.1. Voilà!
+Launch `DNSAgent.exe` and **change your system DNS to 127.0.0.1**. Voilà!
 
 ## Configuration
 
@@ -87,7 +92,7 @@ IPv6 address will only be returned when the client querys for AAAA records.
 127.0.0.1 // IPv4 address with a default port 53
 127.0.0.1:9029 // IPv4 address with a custom port 9029
 2001:4860:4860::8888 // IPv6 address with a default port 53
-[2001:4860:4860::8888]:2064 // IPv6 address with a custom port 9029
+[2001:4860:4860::8888]:9029 // IPv6 address with a custom port 9029
 ```
 
 You can press `Ctrl + R` to reload all configurations and clear cache without restart this program.
