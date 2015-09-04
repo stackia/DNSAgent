@@ -10,7 +10,7 @@ namespace DnsAgent
         public Rule()
         {
             Pattern = "$^";
-            Address = "127.0.0.1";
+            Address = null;
             NameServer = null;
             QueryTimeout = null;
             CompressionMutation = null;
