@@ -262,35 +262,56 @@ namespace DnsAgent
                             if (!Regex.IsMatch(question.Name, Rules[i].Pattern)) continue;
 
                             // Domain name matched
+
+                            if (Rules[i].NameServer != null) // Name server override
+                                targetNameServer = Rules[i].NameServer;
+
+                            if (Rules[i].QueryTimeout != null) // Query timeout override
+                                queryTimeout = Rules[i].QueryTimeout.Value;
+
+                            if (Rules[i].CompressionMutation != null) // Compression pointer mutation override
+                                useCompressionMutation = Rules[i].CompressionMutation.Value;
+
                             if (Rules[i].Address != null)
                             {
                                 IPAddress ip;
                                 IPAddress.TryParse(Rules[i].Address, out ip);
-                                if (ip == null) continue; // Invalid rule
-
-                                if (question.RecordType == RecordType.A &&
+                                if (ip == null) // Invalid IP, may be a domain name
+                                {
+                                    var serverEndpoint = Utils.CreateIpEndPoint(targetNameServer, 53);
+                                    var dnsClient = new DnsClient(serverEndpoint.Address, queryTimeout, serverEndpoint.Port);
+                                    var response = await Task<DnsMessage>.Factory.FromAsync(dnsClient.BeginResolve, dnsClient.EndResolve,
+                                        Rules[i].Address, question.RecordType, question.RecordClass, null);
+                                    if (response == null)
+                                    {
+                                        Logger.Warning($"Remote resolve failed for {Rules[i].Address}.");
+                                        return;
+                                    }
+                                    message.ReturnCode = response.ReturnCode;
+                                    foreach (var answerRecord in response.AnswerRecords)
+                                    {
+                                        answerRecord.Name = question.Name;
+                                        message.AnswerRecords.Add(answerRecord);
+                                    }
+                                    message.IsQuery = false;
+                                }
+                                else
+                                {
+                                    if (question.RecordType == RecordType.A &&
                                     ip.AddressFamily == AddressFamily.InterNetwork)
-                                    message.AnswerRecords.Add(new ARecord(question.Name, 600, ip));
-                                else if (question.RecordType == RecordType.Aaaa &&
-                                         ip.AddressFamily == AddressFamily.InterNetworkV6)
-                                    message.AnswerRecords.Add(new AaaaRecord(question.Name, 600, ip));
-                                else // Type mismatch
-                                    continue;
+                                        message.AnswerRecords.Add(new ARecord(question.Name, 600, ip));
+                                    else if (question.RecordType == RecordType.Aaaa &&
+                                             ip.AddressFamily == AddressFamily.InterNetworkV6)
+                                        message.AnswerRecords.Add(new AaaaRecord(question.Name, 600, ip));
+                                    else // Type mismatch
+                                        continue;
 
-                                message.ReturnCode = ReturnCode.NoError;
-                                message.IsQuery = false;
+                                    message.ReturnCode = ReturnCode.NoError;
+                                    message.IsQuery = false;
+                                }
                             }
-                            else
-                            {
-                                if (Rules[i].NameServer != null) // Name server override
-                                    targetNameServer = Rules[i].NameServer;
 
-                                if (Rules[i].QueryTimeout != null) // Query timeout override
-                                    queryTimeout = Rules[i].QueryTimeout.Value;
-
-                                if (Rules[i].CompressionMutation != null) // Compression pointer mutation override
-                                    useCompressionMutation = Rules[i].CompressionMutation.Value;
-                            }
+                            break;
                         }
                     }
 

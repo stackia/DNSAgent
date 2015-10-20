@@ -31,17 +31,17 @@ namespace ARSoft.Tools.Net.Dns
 		/// <summary>
 		///   Domain name
 		/// </summary>
-		public string Name { get; internal set; }
+		public string Name { get; set; }
 
 		/// <summary>
 		///   Type of the record
 		/// </summary>
-		public RecordType RecordType { get; internal set; }
+		public RecordType RecordType { get; set; }
 
 		/// <summary>
 		///   Class of the record
 		/// </summary>
-		public RecordClass RecordClass { get; internal set; }
+		public RecordClass RecordClass { get; set; }
 
 		internal abstract int MaximumLength { get; }
 

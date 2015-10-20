@@ -52,15 +52,35 @@ namespace ARSoft.Tools.Net.Dns
 		public DnsClient(IPAddress dnsServer, int queryTimeout)
 			: this(new List<IPAddress> { dnsServer }, queryTimeout) {}
 
-		/// <summary>
-		///   Provides a new instance with custom dns servers and query timeout
+        /// <summary>
+		///   Provides a new instance with custom dns server and query timeout
 		/// </summary>
-		/// <param name="dnsServers"> The IPAddresses of the dns servers to use </param>
+		/// <param name="dnsServer"> The IPAddress of the dns server to use </param>
 		/// <param name="queryTimeout"> Query timeout in milliseconds </param>
-		public DnsClient(List<IPAddress> dnsServers, int queryTimeout)
-			: base(dnsServers, queryTimeout, 53) {}
+		/// /// <param name="port"> The dns server port </param>
+		public DnsClient(IPAddress dnsServer, int queryTimeout, int port)
+            : this(new List<IPAddress> { dnsServer }, queryTimeout, port)
+        { }
 
-		protected override int MaximumQueryMessageSize
+        /// <summary>
+        ///   Provides a new instance with custom dns servers and query timeout
+        /// </summary>
+        /// <param name="dnsServers"> The IPAddresses of the dns servers to use </param>
+        /// <param name="queryTimeout"> Query timeout in milliseconds </param>
+        public DnsClient(List<IPAddress> dnsServers, int queryTimeout)
+			: this(dnsServers, queryTimeout, 53) {}
+
+	    /// <summary>
+	    ///   Provides a new instance with custom dns servers and query timeout
+	    /// </summary>
+	    /// <param name="dnsServers"> The IPAddresses of the dns servers to use </param>
+	    /// <param name="queryTimeout"> Query timeout in milliseconds </param>
+	    /// <param name="port"> The dns server port </param>
+	    public DnsClient(List<IPAddress> dnsServers, int queryTimeout, int port)
+            : base(dnsServers, queryTimeout, port)
+        { }
+
+        protected override int MaximumQueryMessageSize
 		{
 			get { return 512; }
 		}
