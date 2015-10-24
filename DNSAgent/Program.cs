@@ -1,8 +1,10 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Configuration.Install;
 using System.Drawing;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.ServiceProcess;
@@ -18,9 +20,10 @@ namespace DnsAgent
     {
         private const string OptionsFileName = "options.cfg";
         private const string RulesFileName = "rules.cfg";
-        private static DnsAgent _dnsAgent;
+        private static List<DnsAgent> _dnsAgents = new List<DnsAgent>();
         private static NotifyIcon _notifyIcon;
         private static ContextMenu _contextMenu;
+        private static DnsMessageCache _agentCommonCache = new DnsMessageCache();
 
         private static void Main(string[] args)
         {
@@ -60,17 +63,32 @@ namespace DnsAgent
             Logger.Info("{0} (build at {1})\n", programName, buildTime.ToString(CultureInfo.CurrentCulture));
             Logger.Info("Starting...");
 
-            _dnsAgent = new DnsAgent(ReadOptions(), ReadRules());
+            var options = ReadOptions();
+            var rules = ReadRules();
+            var listenEndpoints = options.ListenOn.Split(',');
+            var startedEvent = new CountdownEvent(listenEndpoints.Length);
+            lock (_dnsAgents)
+            {
+                foreach (var listenOn in listenEndpoints)
+                {
+                    var agent = new DnsAgent(options, rules, listenOn.Trim(), _agentCommonCache);
+                    agent.Started += () => startedEvent.Signal();
+                    _dnsAgents.Add(agent);
+                }
+            }
             if (Environment.UserInteractive)
             {
-                var startedWaitHandler = new ManualResetEvent(false);
-                _dnsAgent.Started += () => { startedWaitHandler.Set(); };
-                if (!_dnsAgent.Start())
+                lock (_dnsAgents)
                 {
-                    PressAnyKeyToContinue();
-                    return;
+                    if (_dnsAgents.Any(agent => !agent.Start()))
+                    {
+                        PressAnyKeyToContinue();
+                        return;
+                    }
                 }
-                startedWaitHandler.WaitOne();
+                startedEvent.Wait();
+                Logger.Title = "DNSAgent - Listening ...";
+                Logger.Info("DNSAgent has been started.");
                 Logger.Info("Press Ctrl-R to reload configurations, Ctrl-Q to stop and quit.");
 
                 Task.Run(() =>
@@ -94,9 +112,8 @@ namespace DnsAgent
                     }
                 });
 
-                var hideOnStart = _dnsAgent.Options.HideOnStart;
-                var hideMenuItem = new MenuItem(hideOnStart ? "Show" : "Hide");
-                if (hideOnStart)
+                var hideMenuItem = new MenuItem(options.HideOnStart ? "Show" : "Hide");
+                if (options.HideOnStart)
                     ShowWindow(GetConsoleWindow(), SwHide);
                 hideMenuItem.Click += (sender, eventArgs) =>
                 {
@@ -132,16 +149,32 @@ namespace DnsAgent
                 Application.Run();
             }
             else
-                _dnsAgent.Start();
+            {
+                lock (_dnsAgents)
+                {
+                    foreach (var agent in _dnsAgents)
+                    {
+                        agent.Start();
+                    }
+                }
+                Logger.Info("DNSAgent has been started.");
+            }
         }
 
         private static void Stop(bool pressAnyKeyToContinue = true)
         {
-            if (_dnsAgent != null)
-                _dnsAgent.Stop();
+            lock (_dnsAgents)
+            {
+                _dnsAgents.ForEach(agent =>
+                {
+                    agent.Stop();
+                });
+            }
+            Logger.Info("DNSAgent has been stopped.");
 
             if (Environment.UserInteractive)
             {
+                Logger.Title = "DNSAgent - Stopped";
                 _notifyIcon.Dispose();
                 _contextMenu.Dispose();
                 if (pressAnyKeyToContinue)
@@ -152,9 +185,17 @@ namespace DnsAgent
 
         private static void Reload()
         {
-            _dnsAgent.Options = ReadOptions();
-            _dnsAgent.Rules = ReadRules();
-            _dnsAgent.Cache.Clear();
+            var options = ReadOptions();
+            var rules = ReadRules();
+            lock (_dnsAgents)
+            {
+                foreach (var agent in _dnsAgents)
+                {
+                    agent.Options = options;
+                    agent.Rules = rules;
+                }
+            }
+            _agentCommonCache.Clear();
             Logger.Info("Options and rules reloaded. Cache cleared.");
         }
 

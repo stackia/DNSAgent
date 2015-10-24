@@ -24,12 +24,14 @@ namespace DnsAgent
         private ConcurrentDictionary<ushort, CancellationTokenSource> _transactionTimeoutCancellationTokenSources;
         private UdpClient _udpForwarder;
         private UdpClient _udpListener;
+        private readonly string _listenOn;
 
-        public DnsAgent(Options options, Rules rules)
+        public DnsAgent(Options options, Rules rules, string listenOn, DnsMessageCache cache)
         {
             Options = options ?? new Options();
             Rules = rules ?? new Rules();
-            Cache = new DnsMessageCache();
+            _listenOn = listenOn;
+            Cache = cache ?? new DnsMessageCache();
         }
 
         public Options Options
@@ -60,7 +62,7 @@ namespace DnsAgent
 
         public bool Start()
         {
-            var endPoint = Utils.CreateIpEndPoint(Options.ListenOn, 53);
+            var endPoint = Utils.CreateIpEndPoint(_listenOn, 53);
             _stopTokenSource = new CancellationTokenSource();
             _transactionClients = new ConcurrentDictionary<ushort, IPEndPoint>();
             _transactionTimeoutCancellationTokenSources = new ConcurrentDictionary<ushort, CancellationTokenSource>();
@@ -151,10 +153,8 @@ namespace DnsAgent
                     }
                 }
             }, _stopTokenSource.Token);
-
-            Logger.Info("DNSAgent has been started.");
+            
             Logger.Info("Listening on {0}...", endPoint);
-            Logger.Title = "DNSAgent - Listening ...";
             OnStarted();
             return true;
         }
@@ -188,8 +188,6 @@ namespace DnsAgent
             _transactionClients = null;
             _transactionTimeoutCancellationTokenSources = null;
 
-            Logger.Info("DNSAgent has been stopped.");
-            Logger.Title = "DNSAgent - Stopped";
             OnStopped();
         }
 
