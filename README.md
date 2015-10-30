@@ -112,7 +112,7 @@ WARNING: Set `NetworkWhitelist` to `[]` will deny all requests. If you want to d
 
 When a domain name matchs mutiple rules, the last one is used.
 
-You can use {0}/{1}/{2}/... to insert regular expression group matches in "Address" field.
+You can use {0}/{1}/{2}/... to insert regular expression group match result in "Address" field.
 
 IPv6 address will only be returned when the client querys for AAAA records.
 
