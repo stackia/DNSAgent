@@ -19,10 +19,7 @@ namespace DNSAgent
         public DnsMessage Message { get; set; }
         public DateTime ExpireTime { get; set; }
 
-        public bool IsExpired
-        {
-            get { return DateTime.Now > ExpireTime; }
-        }
+        public bool IsExpired => DateTime.Now > ExpireTime;
     }
 
     internal class DnsMessageCache :

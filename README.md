@@ -6,7 +6,9 @@ A powerful "hosts" replacement.
 * Use regular expression to match the domain name.
 * Both IPv4 and IPv6 are supported.
 * Support non-standard listening port (ports other than 53).
+* It's possible to use DNSPod HttpDNS protocal to query for A record.
 * Return a immediate address (A/AAAA record) or redirect query to a custom name server on pattern matched.
+* Redirect one domain name to another, support regular expression matching and replacing.
 * Local cache with custom TTL settings.
 * Support source IP whitelist to filter unauthorized clients.
 * Support compression pointer mutation when querying another name server. This may avoid MITM attack in some network environments.
@@ -45,17 +47,20 @@ A sample configuration:
 ```
 {
     "HideOnStart": false,
-    "ListenOn": "127.0.0.1:53",
-    "DefaultNameServer": "8.8.8.8:53",
+    "ListenOn": "127.0.0.1:53, [::1]",
+    "DefaultNameServer": "119.29.29.29",
+    "UseHttpQuery": false,
     "QueryTimeout": 4000,
     "CompressionMutation": false,
     "CacheResponse": true,
-    "CacheAge": 0,
+    "CacheAge": 86400,
     "NetworkWhitelist": null
 }
 ```
 
 Set `CacheResponse` to `false` will disable local cache. Set CacheAge to 0 will use the DNS response's record TTL as cache TTL.
+
+Set `UseHttpQuery` to `true` will use [DNSPod HttpDNS](https://www.dnspod.cn/httpdns/demo) procotal to query the name server. HttpDNS protocol doesn't support IPv6.
 
 If you want to filter source IP, you can set `NetworkWhitelist` with the following format ([CIDR notation](http://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing) is used below):
 ```
@@ -70,19 +75,44 @@ WARNING: Set `NetworkWhitelist` to `[]` will deny all requests. If you want to d
 ```
 [
     {
-        "Pattern": "^(.*\\.googlevideo\\.com)|((.*\\.)?(youtube|ytimg)\\.com)$",
-        "Address": "203.66.168.119"
+        "Pattern": "^(.*\\.mydomain\\.com)|((.*\\.)?(yourdomain|hisdomain)\\.com)$",
+        "Address": "112.223.221.26"
+    },
+    {
+        "Pattern": "^www\\.google\\.com\\.hk$",
+        "Address": "www.google.com",
+        "NameServer": "8.8.4.4",
+        "CompressionMutation": true
+    },
+    {
+        "Pattern": "^(.*)\\.mysuffix\\.com$",
+        "Address": "{1}"
+    },
+    {
+        "Pattern": "^www\\.google\\.com\\.tw$",
+        "Address": "www.google.com",
+        "NameServer": "127.0.0.1"
+    },
+    {
+        "Pattern": "^www\\.google\\.co\\.jp$",
+        "Address": "www.google.com"
+    },
+    {
+        "Pattern": "^www\\.google\\.cn$",
+        "NameServer": "114.114.114.114"
     },
     {
         "Pattern": "^.*\\.cn$",
-        "NameServer": "114.114.114.114:53",
-        "QueryTimeout": 1000,
-        "CompressionMutation": false
+        "NameServer": "119.29.29.29",
+        "UseHttpQuery": true,
+        "QueryTimeout": 1000
     }
 ]
 ```
 
 When a domain name matchs mutiple rules, the last one is used.
+
+You can use {0}/{1}/{2}/... to insert regular expression group matches in "Address" field.
 
 IPv6 address will only be returned when the client querys for AAAA records.
 

@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -103,7 +104,9 @@ namespace DnsAgent
                         else
                             Logger.Error("[Listener] Unexpected exception:\n{0}", e);
                     }
-                    catch (ObjectDisposedException) {} // Force closing _udpListener will cause this exception
+                    catch (ObjectDisposedException)
+                    {
+                    } // Force closing _udpListener will cause this exception
                     catch (Exception e)
                     {
                         Logger.Error("[Listener] Unexpected exception:\n{0}", e);
@@ -138,7 +141,9 @@ namespace DnsAgent
                         if (Options.CacheResponse)
                             Cache.Update(message.Questions[0], message, Options.CacheAge);
                     }
-                    catch (ParsingException) {}
+                    catch (ParsingException)
+                    {
+                    }
                     catch (SocketException e)
                     {
                         if (e.SocketErrorCode != SocketError.ConnectionReset)
@@ -146,14 +151,16 @@ namespace DnsAgent
                         else
                             Logger.Error("[Forwarder.Receive] Unexpected socket error:\n{0}", e);
                     }
-                    catch (ObjectDisposedException) {} // Force closing _udpListener will cause this exception
+                    catch (ObjectDisposedException)
+                    {
+                    } // Force closing _udpListener will cause this exception
                     catch (Exception e)
                     {
                         Logger.Error("[Forwarder] Unexpected exception:\n{0}", e);
                     }
                 }
             }, _stopTokenSource.Token);
-            
+
             Logger.Info("Listening on {0}...", endPoint);
             OnStarted();
             return true;
@@ -161,24 +168,18 @@ namespace DnsAgent
 
         public void Stop()
         {
-            if (_stopTokenSource != null)
-                _stopTokenSource.Cancel();
-
-            if (_udpListener != null)
-                _udpListener.Close();
-
-            if (_udpForwarder != null)
-                _udpForwarder.Close();
+            _stopTokenSource?.Cancel();
+            _udpListener?.Close();
+            _udpForwarder?.Close();
 
             try
             {
-                if (_listeningTask != null)
-                    _listeningTask.Wait();
-
-                if (_forwardingTask != null)
-                    _forwardingTask.Wait();
+                _listeningTask?.Wait();
+                _forwardingTask?.Wait();
             }
-            catch (AggregateException) {}
+            catch (AggregateException)
+            {
+            }
 
             _stopTokenSource = null;
             _udpListener = null;
@@ -248,6 +249,7 @@ namespace DnsAgent
                     }
 
                     var targetNameServer = Options.DefaultNameServer;
+                    var useHttpQuery = Options.UseHttpQuery;
                     var queryTimeout = Options.QueryTimeout;
                     var useCompressionMutation = Options.CompressionMutation;
 
@@ -257,12 +259,16 @@ namespace DnsAgent
                     {
                         for (var i = Rules.Count - 1; i >= 0; i--)
                         {
-                            if (!Regex.IsMatch(question.Name, Rules[i].Pattern)) continue;
+                            var match = Regex.Match(question.Name, Rules[i].Pattern);
+                            if (!match.Success) continue;
 
                             // Domain name matched
 
                             if (Rules[i].NameServer != null) // Name server override
                                 targetNameServer = Rules[i].NameServer;
+
+                            if (Rules[i].UseHttpQuery != null) // HTTP query override
+                                useHttpQuery = Rules[i].UseHttpQuery.Value;
 
                             if (Rules[i].QueryTimeout != null) // Query timeout override
                                 queryTimeout = Rules[i].QueryTimeout.Value;
@@ -276,27 +282,39 @@ namespace DnsAgent
                                 IPAddress.TryParse(Rules[i].Address, out ip);
                                 if (ip == null) // Invalid IP, may be a domain name
                                 {
-                                    var serverEndpoint = Utils.CreateIpEndPoint(targetNameServer, 53);
-                                    var dnsClient = new DnsClient(serverEndpoint.Address, queryTimeout, serverEndpoint.Port);
-                                    var response = await Task<DnsMessage>.Factory.FromAsync(dnsClient.BeginResolve, dnsClient.EndResolve,
-                                        Rules[i].Address, question.RecordType, question.RecordClass, null);
-                                    if (response == null)
+                                    var address = string.Format(Rules[i].Address, match.Groups.Cast<object>().ToArray());
+                                    if (question.RecordType == RecordType.A && useHttpQuery)
                                     {
-                                        Logger.Warning($"Remote resolve failed for {Rules[i].Address}.");
-                                        return;
+                                        await ResolveWithHttp(targetNameServer, address, queryTimeout, message);
                                     }
-                                    message.ReturnCode = response.ReturnCode;
-                                    foreach (var answerRecord in response.AnswerRecords)
+                                    else
                                     {
-                                        answerRecord.Name = question.Name;
-                                        message.AnswerRecords.Add(answerRecord);
+                                        var serverEndpoint = Utils.CreateIpEndPoint(targetNameServer, 53);
+                                        var dnsClient = new DnsClient(serverEndpoint.Address, queryTimeout,
+                                            serverEndpoint.Port);
+                                        var response =
+                                            await
+                                                Task<DnsMessage>.Factory.FromAsync(dnsClient.BeginResolve,
+                                                    dnsClient.EndResolve,
+                                                    address, question.RecordType, question.RecordClass, null);
+                                        if (response == null)
+                                        {
+                                            Logger.Warning($"Remote resolve failed for {address}.");
+                                            return;
+                                        }
+                                        foreach (var answerRecord in response.AnswerRecords)
+                                        {
+                                            answerRecord.Name = question.Name;
+                                            message.AnswerRecords.Add(answerRecord);
+                                        }
+                                        message.ReturnCode = response.ReturnCode;
+                                        message.IsQuery = false;
                                     }
-                                    message.IsQuery = false;
                                 }
                                 else
                                 {
                                     if (question.RecordType == RecordType.A &&
-                                    ip.AddressFamily == AddressFamily.InterNetwork)
+                                        ip.AddressFamily == AddressFamily.InterNetwork)
                                         message.AnswerRecords.Add(new ARecord(question.Name, 600, ip));
                                     else if (question.RecordType == RecordType.Aaaa &&
                                              ip.AddressFamily == AddressFamily.InterNetworkV6)
@@ -325,7 +343,6 @@ namespace DnsAgent
                     //        message.AnswerRecords.AddRange(dnsResponse.Where(
                     //            ip => ip.AddressFamily == AddressFamily.InterNetwork).Select(
                     //                ip => new ARecord(question.Name, 0, ip)));
-                    //    }
                     //    else if (question.RecordType == RecordType.Aaaa)
                     //    {
                     //        message.AnswerRecords.AddRange(dnsResponse.Where(
@@ -336,12 +353,16 @@ namespace DnsAgent
                     //    message.IsQuery = false;
                     //}
 
+                    if (message.IsQuery && question.RecordType == RecordType.A && useHttpQuery)
+                    {
+                        await ResolveWithHttp(targetNameServer, question.Name, queryTimeout, message);
+                    }
+
                     if (message.IsQuery)
                     {
                         // Use internal forwarder to forward query to another name server
-                        await
-                            ForwardMessage(message, udpMessage, Utils.CreateIpEndPoint(targetNameServer, 53),
-                                queryTimeout, useCompressionMutation);
+                        await ForwardMessage(message, udpMessage, Utils.CreateIpEndPoint(targetNameServer, 53),
+                            queryTimeout, useCompressionMutation);
                     }
                     else
                     {
@@ -359,7 +380,9 @@ namespace DnsAgent
                         }
                     }
                 }
-                catch (ParsingException) {}
+                catch (ParsingException)
+                {
+                }
                 catch (SocketException e)
                 {
                     Logger.Error("[Listener.Send] Unexpected socket error:\n{0}", e);
@@ -415,12 +438,13 @@ namespace DnsAgent
                         out ignoreTokenSource);
 
                     var warningText = message.Questions.Count > 0
-                        ? string.Format("{0} (Type {1})", message.Questions[0].Name,
-                            message.Questions[0].RecordType)
-                        : string.Format("Transaction #{0}", message.TransactionID);
+                        ? $"{message.Questions[0].Name} (Type {message.Questions[0].RecordType})"
+                        : $"Transaction #{message.TransactionID}";
                     Logger.Warning("Query timeout for: {0}", warningText);
                 }
-                catch (TaskCanceledException) {}
+                catch (TaskCanceledException)
+                {
+                }
             }
             catch (InfiniteForwardingException e)
             {
@@ -447,18 +471,47 @@ namespace DnsAgent
                 await _udpListener.SendAsync(responseBuffer, responseBuffer.Length, originalUdpMessage.RemoteEndPoint);
         }
 
+        private static async Task ResolveWithHttp(string targetNameServer, string domainName, int timeout, DnsMessage message)
+        {
+            var request = WebRequest.Create($"http://{targetNameServer}/d?dn={domainName}&ttl=1");
+            request.Timeout = timeout;
+            var stream = (await request.GetResponseAsync()).GetResponseStream();
+            if (stream == null)
+                throw new Exception("Invalid HTTP response stream.");
+            using (var reader = new StreamReader(stream))
+            {
+                var result = await reader.ReadToEndAsync();
+                if (string.IsNullOrEmpty(result))
+                {
+                    message.ReturnCode = ReturnCode.NxDomain;
+                    message.IsQuery = false;
+                }
+                else
+                {
+                    var parts = result.Split(',');
+                    var ips = parts[0].Split(';');
+                    foreach (var ip in ips)
+                    {
+                        message.AnswerRecords.Add(new ARecord(domainName, int.Parse(parts[1]), IPAddress.Parse(ip)));
+                    }
+                    message.ReturnCode = ReturnCode.NoError;
+                    message.IsQuery = false;
+                }
+            }
+        }
+
         #region Event Invokers
 
         protected virtual void OnStarted()
         {
             var handler = Started;
-            if (handler != null) handler();
+            handler?.Invoke();
         }
 
         protected virtual void OnStopped()
         {
             var handler = Stopped;
-            if (handler != null) handler();
+            handler?.Invoke();
         }
 
         #endregion

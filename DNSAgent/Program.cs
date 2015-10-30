@@ -20,10 +20,10 @@ namespace DnsAgent
     {
         private const string OptionsFileName = "options.cfg";
         private const string RulesFileName = "rules.cfg";
-        private static List<DnsAgent> _dnsAgents = new List<DnsAgent>();
+        private static readonly List<DnsAgent> DnsAgents = new List<DnsAgent>();
         private static NotifyIcon _notifyIcon;
         private static ContextMenu _contextMenu;
-        private static DnsMessageCache _agentCommonCache = new DnsMessageCache();
+        private static readonly DnsMessageCache AgentCommonCache = new DnsMessageCache();
 
         private static void Main(string[] args)
         {
@@ -59,7 +59,7 @@ namespace DnsAgent
 
             var version = Assembly.GetExecutingAssembly().GetName().Version;
             var buildTime = Utils.RetrieveLinkerTimestamp(Assembly.GetExecutingAssembly().Location);
-            var programName = string.Format("DNSAgent {0}.{1}.{2}", version.Major, version.Minor, version.Build);
+            var programName = $"DNSAgent {version.Major}.{version.Minor}.{version.Build}";
             Logger.Info("{0} (build at {1})\n", programName, buildTime.ToString(CultureInfo.CurrentCulture));
             Logger.Info("Starting...");
 
@@ -67,20 +67,20 @@ namespace DnsAgent
             var rules = ReadRules();
             var listenEndpoints = options.ListenOn.Split(',');
             var startedEvent = new CountdownEvent(listenEndpoints.Length);
-            lock (_dnsAgents)
+            lock (DnsAgents)
             {
                 foreach (var listenOn in listenEndpoints)
                 {
-                    var agent = new DnsAgent(options, rules, listenOn.Trim(), _agentCommonCache);
+                    var agent = new DnsAgent(options, rules, listenOn.Trim(), AgentCommonCache);
                     agent.Started += () => startedEvent.Signal();
-                    _dnsAgents.Add(agent);
+                    DnsAgents.Add(agent);
                 }
             }
             if (Environment.UserInteractive)
             {
-                lock (_dnsAgents)
+                lock (DnsAgents)
                 {
-                    if (_dnsAgents.Any(agent => !agent.Start()))
+                    if (DnsAgents.Any(agent => !agent.Start()))
                     {
                         PressAnyKeyToContinue();
                         return;
@@ -150,9 +150,9 @@ namespace DnsAgent
             }
             else
             {
-                lock (_dnsAgents)
+                lock (DnsAgents)
                 {
-                    foreach (var agent in _dnsAgents)
+                    foreach (var agent in DnsAgents)
                     {
                         agent.Start();
                     }
@@ -163,9 +163,9 @@ namespace DnsAgent
 
         private static void Stop(bool pressAnyKeyToContinue = true)
         {
-            lock (_dnsAgents)
+            lock (DnsAgents)
             {
-                _dnsAgents.ForEach(agent =>
+                DnsAgents.ForEach(agent =>
                 {
                     agent.Stop();
                 });
@@ -187,15 +187,15 @@ namespace DnsAgent
         {
             var options = ReadOptions();
             var rules = ReadRules();
-            lock (_dnsAgents)
+            lock (DnsAgents)
             {
-                foreach (var agent in _dnsAgents)
+                foreach (var agent in DnsAgents)
                 {
                     agent.Options = options;
                     agent.Rules = rules;
                 }
             }
-            _agentCommonCache.Clear();
+            AgentCommonCache.Clear();
             Logger.Info("Options and rules reloaded. Cache cleared.");
         }
 
