@@ -264,6 +264,10 @@ namespace DnsAgent
 
                             // Domain name matched
 
+                            var recordType = question.RecordType;
+                            if (Rules[i].ForceAAAA != null && Rules[i].ForceAAAA.Value) // RecordType override
+                                recordType = RecordType.Aaaa;
+
                             if (Rules[i].NameServer != null) // Name server override
                                 targetNameServer = Rules[i].NameServer;
 
@@ -283,7 +287,7 @@ namespace DnsAgent
                                 if (ip == null) // Invalid IP, may be a domain name
                                 {
                                     var address = string.Format(Rules[i].Address, match.Groups.Cast<object>().ToArray());
-                                    if (question.RecordType == RecordType.A && useHttpQuery)
+                                    if (recordType == RecordType.A && useHttpQuery)
                                     {
                                         await ResolveWithHttp(targetNameServer, address, queryTimeout, message);
                                     }
@@ -296,7 +300,7 @@ namespace DnsAgent
                                             await
                                                 Task<DnsMessage>.Factory.FromAsync(dnsClient.BeginResolve,
                                                     dnsClient.EndResolve,
-                                                    address, question.RecordType, question.RecordClass, null);
+                                                    address, recordType, question.RecordClass, null);
                                         if (response == null)
                                         {
                                             Logger.Warning($"Remote resolve failed for {address}.");
@@ -313,21 +317,12 @@ namespace DnsAgent
                                 }
                                 else
                                 {
-                                    if (ip.AddressFamily == AddressFamily.InterNetwork)
-                                    {
-                                        if (question.RecordType == RecordType.A)
-                                            message.AnswerRecords.Add(new ARecord(question.Name, 600, ip));
-                                        else
-                                            continue;
-                                    }
-                                    else if (ip.AddressFamily == AddressFamily.InterNetworkV6)
-                                    {
-                                        if (question.RecordType == RecordType.Aaaa ||
-                                            (Rules[i].ReturnOnARequest != null && Rules[i].ReturnOnARequest.Value))
-                                            message.AnswerRecords.Add(new AaaaRecord(question.Name, 600, ip));
-                                        else
-                                            continue;
-                                    }
+                                    if (recordType == RecordType.A &&
+                                        ip.AddressFamily == AddressFamily.InterNetwork)
+                                        message.AnswerRecords.Add(new ARecord(question.Name, 600, ip));
+                                    else if (recordType == RecordType.Aaaa &&
+                                             ip.AddressFamily == AddressFamily.InterNetworkV6)
+                                        message.AnswerRecords.Add(new AaaaRecord(question.Name, 600, ip));
                                     else // Type mismatch
                                         continue;
 

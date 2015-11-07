@@ -34,9 +34,9 @@ namespace DnsAgent
         public int? QueryTimeout { get; set; } = null;
 
         /// <summary>
-        ///     Whether to force to return an (IPv6) address even when client requests a record with type A.
+        ///     Whether to transform request to AAAA type.
         /// </summary>
-        public bool? ReturnOnARequest { get; set; } = null;
+        public bool? ForceAAAA { get; set; } = null;
 
         /// <summary>
         ///     Whether to enable compression pointer mutation to query this name server. If "Address" is set, this will be
