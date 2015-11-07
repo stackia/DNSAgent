@@ -322,7 +322,8 @@ namespace DnsAgent
                                     }
                                     else if (ip.AddressFamily == AddressFamily.InterNetworkV6)
                                     {
-                                        if (question.RecordType == RecordType.Aaaa)
+                                        if (question.RecordType == RecordType.Aaaa ||
+                                            (Rules[i].ReturnOnARequest != null && Rules[i].ReturnOnARequest.Value))
                                             message.AnswerRecords.Add(new AaaaRecord(question.Name, 600, ip));
                                         else
                                             continue;
