@@ -313,12 +313,20 @@ namespace DnsAgent
                                 }
                                 else
                                 {
-                                    if (question.RecordType == RecordType.A &&
-                                        ip.AddressFamily == AddressFamily.InterNetwork)
-                                        message.AnswerRecords.Add(new ARecord(question.Name, 600, ip));
-                                    else if (question.RecordType == RecordType.Aaaa &&
-                                             ip.AddressFamily == AddressFamily.InterNetworkV6)
-                                        message.AnswerRecords.Add(new AaaaRecord(question.Name, 600, ip));
+                                    if (ip.AddressFamily == AddressFamily.InterNetwork)
+                                    {
+                                        if (question.RecordType == RecordType.A)
+                                            message.AnswerRecords.Add(new ARecord(question.Name, 600, ip));
+                                        else
+                                            continue;
+                                    }
+                                    else if (ip.AddressFamily == AddressFamily.InterNetworkV6)
+                                    {
+                                        if (question.RecordType == RecordType.Aaaa)
+                                            message.AnswerRecords.Add(new AaaaRecord(question.Name, 600, ip));
+                                        else
+                                            continue;
+                                    }
                                     else // Type mismatch
                                         continue;
 
