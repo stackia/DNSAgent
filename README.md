@@ -1,3 +1,5 @@
+# This project is no longer actively maintained. We instead recommend using other modern DNS solutions, e.g. [CoreDNS](https://github.com/coredns/coredns).
+
 # DNSAgent
 A powerful "hosts" replacement.
 
